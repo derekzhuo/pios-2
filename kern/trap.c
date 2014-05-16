@@ -21,7 +21,8 @@
 // Interrupt descriptor table.  Must be built at run time because
 // shifted function addresses can't be represented in relocation records.
 static struct gatedesc idt[256];
-
+// in trampasm.S: array of 256 entry pointers
+extern uint32_t vectors[];  
 // This "pseudo-descriptor" is needed only by the LIDT instruction,
 // to specify both the size and address of th IDT at once.
 static struct pseudodesc idt_pd = {
@@ -29,12 +30,18 @@ static struct pseudodesc idt_pd = {
 };
 
 
+// hong:
+// code by me
 static void
 trap_init_idt(void)
 {
-	extern segdesc gdt[];
-	
-	panic("trap_init() not implemented.");
+	 extern segdesc gdt[];
+	 int i;
+	 for(i = 0; i < 20; i++) {
+	 	SETGATE(idt[i], 1, CPU_GDT_KCODE, vectors[i],3);
+	 }
+	 SETGATE(idt[30], 1, CPU_GDT_KCODE, vectors[30],3);
+	//panic("trap_init() not implemented.");
 }
 
 void
@@ -44,7 +51,6 @@ trap_init(void)
 	// initialize the IDT.  Other CPUs will share the same IDT.
 	if (cpu_onboot())
 		trap_init_idt();
-
 	// Load the IDT into this processor's IDT register.
 	asm volatile("lidt %0" : : "m" (idt_pd));
 
@@ -195,37 +201,41 @@ trap_check(void **argsp)
 	args.reip = after_div0;
 	asm volatile("div %0,%0; after_div0:" : : "r" (0));
 	assert(args.trapno == T_DIVIDE);
-
 	// Make sure we got our correct stack back with us.
 	// The asm ensures gcc uses ebp/esp to get the cookie.
 	asm volatile("" : : : "eax","ebx","ecx","edx","esi","edi");
 	assert(cookie == 0xfeedface);
-
+	cprintf("T_DIVIDE succeed\n");
 	// Breakpoint trap
 	args.reip = after_breakpoint;
 	asm volatile("int3; after_breakpoint:");
 	assert(args.trapno == T_BRKPT);
+	cprintf("T_BRKPT succeed\n");
 
 	// Overflow trap
 	args.reip = after_overflow;
 	asm volatile("addl %0,%0; into; after_overflow:" : : "r" (0x70000000));
 	assert(args.trapno == T_OFLOW);
+	cprintf("T_OFLOW succeed\n");
 
 	// Bounds trap
 	args.reip = after_bound;
 	int bounds[2] = { 1, 3 };
 	asm volatile("boundl %0,%1; after_bound:" : : "r" (0), "m" (bounds[0]));
 	assert(args.trapno == T_BOUND);
+	cprintf("T_BOUND succeed\n");
 
 	// Illegal instruction trap
 	args.reip = after_illegal;
 	asm volatile("ud2; after_illegal:");	// guaranteed to be undefined
 	assert(args.trapno == T_ILLOP);
+	cprintf("T_ILLOP succeed\n");
 
 	// General protection fault due to invalid segment load
 	args.reip = after_gpfault;
 	asm volatile("movl %0,%%fs; after_gpfault:" : : "r" (-1));
 	assert(args.trapno == T_GPFLT);
+	cprintf("T_GPFLT succeed\n");
 
 	// General protection fault due to privilege violation
 	if (read_cs() & 3) {
@@ -236,7 +246,7 @@ trap_check(void **argsp)
 
 	// Make sure our stack cookie is still with us
 	assert(cookie == 0xfeedface);
-
+	cprintf("T_GPFLT succeed\n");
 	*argsp = NULL;	// recovery mechanism not needed anymore
 }
 

@@ -60,6 +60,13 @@ typedef struct cpu {
 	char		kstacklo[1];
 
 	// High end (starting point) of the kernel stack.
+	// hong:
+	// (gdb) p &cpu_boot
+	//  $8 = (cpu *) 0x104000
+	// (gdb) p &(cpu_boot->kstackhi)
+	// $6 = (char (*)[0]) 0x105000    !!!!   in entry.S the initial esp ==(cpu_boot + 4096) ==$kstackhi== tss->esp0
+	// (gdb) p &(cpu_boot->kstacklo)
+	// $7 = (char (*)[1]) 0x1040ac
 	char gcc_aligned(PAGESIZE) kstackhi[0];
 } cpu;
 

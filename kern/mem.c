@@ -32,6 +32,10 @@ void mem_check(void);
 void
 mem_init(void)
 {
+	//extern char start[], edata[], end[];
+	//cprintf("start : 0x%x\n",start);
+	//cprintf("edata : 0x%x\n",edata);
+	//cprintf("end : 0x%x\n",end);
 	if (!cpu_onboot())	// only do once, on the boot CPU
 		return;
 
@@ -43,7 +47,9 @@ mem_init(void)
 	// additional RAM beyond that would have to be detected another way.
 	size_t basemem = ROUNDDOWN(nvram_read16(NVRAM_BASELO)*1024, PAGESIZE);
 	size_t extmem = ROUNDDOWN(nvram_read16(NVRAM_EXTLO)*1024, PAGESIZE);
-
+	cprintf("basemem : 0x%x\n",basemem);   // -> 0xa0000 == 640k 
+	cprintf("extmem : 0x%x\n",extmem);		// -> 0x3fff000 == 
+	panic("aaaa\n");
 	warn("Assuming we have 1GB of memory!");
 	extmem = 1024*1024*1024 - MEM_EXT;	// assume 1GB total memory
 
@@ -52,11 +58,11 @@ mem_init(void)
 
 	// Compute the total number of physical pages (including I/O holes)
 	mem_npage = mem_max / PAGESIZE;
-
+	
 	cprintf("Physical memory: %dK available, ", (int)(mem_max/1024));
 	cprintf("base = %dK, extended = %dK\n",
 		(int)(basemem/1024), (int)(extmem/1024));
-
+	// OUTPUT : Physical memory: 1048576K available, base = 640K, extended = 1047552K
 
 	// Insert code here to:
 	// (1)	allocate physical memory for the mem_pageinfo array,
@@ -88,6 +94,10 @@ mem_init(void)
 		// Add the page to the end of the free list.
 		*freetail = &mem_pageinfo[i];
 		freetail = &mem_pageinfo[i].free_next;
+		if(i<6) {	
+			cprintf("&mem_pageinfo[%d] : 0x%x\n",i,&mem_pageinfo[i]);
+			cprintf("&mem_pageinfo[%d].free_next : 0x%x\n",i,&mem_pageinfo[i].free_next);
+		}
 	}
 	*freetail = NULL;	// null-terminate the freelist
 

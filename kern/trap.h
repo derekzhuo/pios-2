@@ -45,6 +45,7 @@ void trap_print(trapframe *tf);
 
 void trap(trapframe *tf) gcc_noreturn;
 void trap_return(trapframe *tf) gcc_noreturn;
+void trap_usermode(uintptr_t,uint32_t, uintptr_t) gcc_noreturn;
 
 // Check for correct operation of trap handling.
 void trap_check_kernel(void);
