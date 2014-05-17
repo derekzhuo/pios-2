@@ -40,6 +40,8 @@ struct printbuf {
 static void
 putch(int ch, struct printbuf *b)
 {
+	// hong:
+	// ch is the int type ????
 	b->buf[b->idx++] = ch;
 	if (b->idx == CPUTS_MAX-1) {
 		b->buf[b->idx] = 0;
@@ -58,6 +60,8 @@ vcprintf(const char *fmt, va_list ap)
 	b.cnt = 0;
 	vprintfmt((void*)putch, &b, fmt, ap);
 
+	// hong:
+	// output the remain content in b.buf
 	b.buf[b.idx] = 0;
 	cputs(b.buf);
 
@@ -69,9 +73,14 @@ cprintf(const char *fmt, ...)
 {
 	va_list ap;
 	int cnt;
-
+	// hong:
+	// initialize ap,
+	// it points to the first argument in variable argument list
 	va_start(ap, fmt);
 	cnt = vcprintf(fmt, ap);
+	// hong:
+	// after get all the parameters 
+	// turn off the pointer ap for safe
 	va_end(ap);
 
 	return cnt;

@@ -45,8 +45,11 @@ extern char ROOTEXE_START[];
 void
 init(void)
 {
+	// hong:
+	// can not find start  --> in entry.S
+	// edata, end, --> 
 	extern char start[], edata[], end[];
-
+	
 	// Before anything else, complete the ELF loading process.
 	// Clear all uninitialized global data (BSS) in our program,
 	// ensuring that all static/global variables start out zero.
@@ -55,15 +58,21 @@ init(void)
 
 	// Initialize the console.
 	// Can't call cprintf until after we do this!
+	// hong :
+	// the first thing the kernel does is initialize the console device driver so that your kernel can produce visible output. 
 	cons_init();
-
+	
+	// Lab 1: test cprintf and debug_trace
+	cprintf("1234 decimal is %o octal!\n", 1234);
+	debug_check();	
 	// Initialize and load the bootstrap CPU's GDT, TSS, and IDT.
 	cpu_init();
 	trap_init();
-
+	
 	// Physical memory detection/initialization.
 	// Can't call mem_alloc until after we do this!
 	mem_init();
+	cprintf("out mem_init\n");
 
 	// Lab 2: check spinlock implementation
 	if (cpu_onboot())
@@ -84,7 +93,20 @@ init(void)
 	// Lab 1: change this so it enters user() in user mode,
 	// running on the user_stack declared above,
 	// instead of just calling user() directly.
+	 trapframe tf = {
+		gs: CPU_GDT_UDATA | 3,
+		fs: CPU_GDT_UDATA | 3,
+		es: CPU_GDT_UDATA | 3,
+		ds: CPU_GDT_UDATA | 3,
+		cs: CPU_GDT_UCODE | 3,
+		ss: CPU_GDT_UDATA | 3,
+		eflags: FL_IOPL_3,
+		eip: (uint32_t)user,
+		esp: (uint32_t)&user_stack[PAGESIZE],
+	};
+	trap_return(&tf);
 	user();
+	cprintf("out user\n");
 }
 
 // This is the first function that gets run in user mode (ring 3).
@@ -95,6 +117,8 @@ user()
 {
 	cprintf("in user()\n");
 	assert(read_esp() > (uint32_t) &user_stack[0]);
+	// hong:
+	// sizeof(user_stack) == 4096
 	assert(read_esp() < (uint32_t) &user_stack[sizeof(user_stack)]);
 
 	// Check the system call and process scheduling code.

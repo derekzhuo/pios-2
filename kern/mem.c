@@ -27,12 +27,22 @@ pageinfo *mem_pageinfo;		// Metadata array indexed by page number
 
 pageinfo *mem_freelist;		// Start of free page list
 
+//pageinfo tmp_paginfo[1024*1024*1024/PAGESIZE];
+pageinfo tmp_mem_pageinfo[1024*1024*1024/PAGESIZE];
+
 
 void mem_check(void);
 
 void
 mem_init(void)
 {
+	extern char start[], edata[], end[];
+	cprintf("start : 0x%x, 0x%x\n",start, &start[0]);
+	cprintf("edata : 0x%x\n",edata);
+	cprintf("end : 0x%x, 0x%x\n",end, &end[0]);
+	cprintf("&mem_pageinfo : 0x%x\n",&mem_pageinfo);
+	cprintf("&mem_freelist : 0x%x\n",&mem_freelist);
+	cprintf("&tmp_paginfo : 0x%x\n",&tmp_mem_pageinfo);
 	if (!cpu_onboot())	// only do once, on the boot CPU
 		return;
 
@@ -44,7 +54,8 @@ mem_init(void)
 	// additional RAM beyond that would have to be detected another way.
 	size_t basemem = ROUNDDOWN(nvram_read16(NVRAM_BASELO)*1024, PAGESIZE);
 	size_t extmem = ROUNDDOWN(nvram_read16(NVRAM_EXTLO)*1024, PAGESIZE);
-
+	cprintf("basemem : 0x%x\n",basemem);   // -> 0xa0000 == 640k 
+	cprintf("extmem : 0x%x\n",extmem);		// -> 0x3fff000 == 
 	warn("Assuming we have 1GB of memory!");
 	extmem = 1024*1024*1024 - MEM_EXT;	// assume 1GB total memory
 
@@ -53,11 +64,13 @@ mem_init(void)
 
 	// Compute the total number of physical pages (including I/O holes)
 	mem_npage = mem_max / PAGESIZE;
-
-	cprintf("Physical memory: %dK available, ", (int)(mem_max/1024));
-	cprintf("base = %dK, extended = %dK\n",
+	
+	cprintf("Physical memory: 0x%xK available, ", (int)(mem_max/1024));
+	cprintf("base = 0x%xK, extended = 0x%xK\n",
 		(int)(basemem/1024), (int)(extmem/1024));
-
+	
+	//panic("aaaa\n");
+	
 
 	// Insert code here to:
 	// (1)	allocate physical memory for the mem_pageinfo array,
@@ -82,10 +95,31 @@ mem_init(void)
 	// Change the code to reflect this.
 	pageinfo **freetail = &mem_freelist;
 	int i;
+	uint32_t page_start;
+	mem_pageinfo = tmp_mem_pageinfo;
+	memset(tmp_mem_pageinfo, 0, sizeof(pageinfo)*1024*1024*1024/PAGESIZE);
 	for (i = 0; i < mem_npage; i++) {
+		
 		// A free page has no references to it.
 		mem_pageinfo[i].refcount = 0;
-
+		
+		// search free page
+		// reserve page 0 and 1
+		if (i == 0 || i == 1) {
+			continue;
+		}
+		page_start = mem_pi2phys(mem_pageinfo + i);
+		
+		// ignore [MEM_IO, MEM_EXT)
+		if (page_start + PAGESIZE >= MEM_IO && page_start < MEM_EXT) {
+			continue;
+		}
+		
+		// ignore [kernel]  --> ([start,end))
+		if (page_start + PAGESIZE >= (uint32_t)start && page_start < (uint32_t)end) {
+			continue;
+		}
+		
 		// Add the page to the end of the free list.
 		*freetail = &mem_pageinfo[i];
 		freetail = &mem_pageinfo[i].free_next;
@@ -93,7 +127,7 @@ mem_init(void)
 	*freetail = NULL;	// null-terminate the freelist
 
 	// ...and remove this when you're ready.
-	panic("mem_init() not implemented");
+	//panic("mem_init() not implemented");
 
 	// Check to make sure the page allocator seems to work correctly.
 	mem_check();
@@ -115,7 +149,13 @@ mem_alloc(void)
 {
 	// Fill this function in
 	// Fill this function in.
-	panic("mem_alloc not implemented.");
+	// hong: 
+	// how to handle multiprocessor operation, where is the lock
+	if (mem_freelist == NULL)
+		return NULL;
+	pageinfo *result = mem_freelist;
+	mem_freelist = mem_freelist->free_next;
+	return result;
 }
 
 //
@@ -126,7 +166,9 @@ void
 mem_free(pageinfo *pi)
 {
 	// Fill this function in.
-	panic("mem_free not implemented.");
+	assert(pi->refcount == 0);
+	pi->free_next = mem_freelist;
+	mem_freelist = pi;
 }
 
 //

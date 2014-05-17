@@ -80,14 +80,15 @@ typedef struct pushregs {
 } pushregs;
 
 
-// This struct represents the format of the trap frames
+// 1) This struct represents the format of the trap frames
 // that get pushed on the kernel stack by the processor
 // in conjunction with the interrupt/trap entry code in trapasm.S.
-// All interrupts and traps use this same format,
+// 2) All interrupts and traps use this same format,
 // although not all fields are always used:
-// e.g., the error code (err) applies only to some traps,
-// and the processor pushes esp and ss
-// only when taking a trap from user mode (privilege level >0).
+// e.g., 
+// ++ the error code (err) applies only to some traps,
+// ++ and the processor pushes esp and ss
+// ++ only when taking a trap from user mode (privilege level >0).
 typedef struct trapframe {
 
 	// registers and other info we push manually in trapasm.S
