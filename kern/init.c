@@ -44,7 +44,6 @@ init(void)
 	// edata, end, --> 
 	extern char start[], edata[], end[];
 	
-	cprintf("start : 0x%x\n",start);
 	// Before anything else, complete the ELF loading process.
 	// Clear all uninitialized global data (BSS) in our program,
 	// ensuring that all static/global variables start out zero.
@@ -73,8 +72,8 @@ init(void)
 	
 	// Physical memory detection/initialization.
 	// Can't call mem_alloc until after we do this!
-	//mem_init();
-	//cprintf("out mem_init\n");
+	mem_init();
+	cprintf("out mem_init\n");
 
 
 	// Lab 1: change this so it enters user() in user mode,
