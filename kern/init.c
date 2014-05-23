@@ -72,20 +72,19 @@ init(void)
 	// Physical memory detection/initialization.
 	// Can't call mem_alloc until after we do this!
 	mem_init();
-	cprintf("out mem_init\n");
 
 	// Lab 2: check spinlock implementation
 	if (cpu_onboot())
 		spinlock_check();
-
 	// Find and start other processors in a multiprocessor system
 	mp_init();		// Find info about processors in system
 	pic_init();		// setup the legacy PIC (mainly to disable it)
 	ioapic_init();		// prepare to handle external device interrupts
 	lapic_init();		// setup this CPU's local APIC
 	cpu_bootothers();	// Get other processors started
-//	cprintf("CPU %d (%s) has booted\n", cpu_cur()->id,
-//		cpu_onboot() ? "BP" : "AP");
+	
+	cprintf("CPU %d (%s) has booted\n", cpu_cur()->id,
+		cpu_onboot() ? "BP" : "AP");
 
 	// Initialize the process management code.
 	proc_init();
@@ -93,7 +92,8 @@ init(void)
 	// Lab 1: change this so it enters user() in user mode,
 	// running on the user_stack declared above,
 	// instead of just calling user() directly.
-	 trapframe tf = {
+	
+	 /*trapframe tf = {
 		gs: CPU_GDT_UDATA | 3,
 		fs: CPU_GDT_UDATA | 3,
 		es: CPU_GDT_UDATA | 3,
@@ -104,9 +104,18 @@ init(void)
 		eip: (uint32_t)user,
 		esp: (uint32_t)&user_stack[PAGESIZE],
 	};
-	trap_return(&tf);
+	trap_return(&tf);*/
+
+	proc *user_proc;
+	user_proc = proc_alloc(NULL,0);
+	user_proc->sv.tf.esp = (uint32_t)&user_stack[PAGESIZE];
+	user_proc->sv.tf.eip =  (uint32_t)user;
+	user_proc->sv.tf.eflags =  FL_IOPL_3;
+	user_proc->sv.tf.gs = CPU_GDT_UDATA | 3;
+	user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
+	proc_ready(user_proc);
+	proc_sched();
 	user();
-	cprintf("out user\n");
 }
 
 // This is the first function that gets run in user mode (ring 3).
@@ -115,7 +124,8 @@ init(void)
 void
 user()
 {
-	cprintf("in user()\n");
+	// hong: system haven't complete 
+	//cprintf("in user()\n");
 	assert(read_esp() > (uint32_t) &user_stack[0]);
 	// hong:
 	// sizeof(user_stack) == 4096

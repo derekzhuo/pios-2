@@ -45,6 +45,7 @@ trap_init_idt(void)
 	 	SETGATE(idt[i], 1, CPU_GDT_KCODE, vectors[i],3);
 	 }
 	 SETGATE(idt[30], 1, CPU_GDT_KCODE, vectors[30],3);
+	 SETGATE(idt[48], 1, CPU_GDT_KCODE, vectors[48],3);
 	//panic("trap_init() not implemented.");
 }
 
@@ -219,37 +220,37 @@ trap_check(void **argsp)
 	// The asm ensures gcc uses ebp/esp to get the cookie.
 	asm volatile("" : : : "eax","ebx","ecx","edx","esi","edi");
 	assert(cookie == 0xfeedface);
-	cprintf("T_DIVIDE succeed\n");
+	//cprintf("T_DIVIDE succeed\n");
 	// Breakpoint trap
 	args.reip = after_breakpoint;
 	asm volatile("int3; after_breakpoint:");
 	assert(args.trapno == T_BRKPT);
-	cprintf("T_BRKPT succeed\n");
+	//cprintf("T_BRKPT succeed\n");
 
 	// Overflow trap
 	args.reip = after_overflow;
 	asm volatile("addl %0,%0; into; after_overflow:" : : "r" (0x70000000));
 	assert(args.trapno == T_OFLOW);
-	cprintf("T_OFLOW succeed\n");
+	//cprintf("T_OFLOW succeed\n");
 
 	// Bounds trap
 	args.reip = after_bound;
 	int bounds[2] = { 1, 3 };
 	asm volatile("boundl %0,%1; after_bound:" : : "r" (0), "m" (bounds[0]));
 	assert(args.trapno == T_BOUND);
-	cprintf("T_BOUND succeed\n");
+	//cprintf("T_BOUND succeed\n");
 
 	// Illegal instruction trap
 	args.reip = after_illegal;
 	asm volatile("ud2; after_illegal:");	// guaranteed to be undefined
 	assert(args.trapno == T_ILLOP);
-	cprintf("T_ILLOP succeed\n");
+	//cprintf("T_ILLOP succeed\n");
 
 	// General protection fault due to invalid segment load
 	args.reip = after_gpfault;
 	asm volatile("movl %0,%%fs; after_gpfault:" : : "r" (-1));
 	assert(args.trapno == T_GPFLT);
-	cprintf("T_GPFLT succeed\n");
+	//cprintf("T_GPFLT succeed\n");
 
 	// General protection fault due to privilege violation
 	if (read_cs() & 3) {
@@ -260,7 +261,7 @@ trap_check(void **argsp)
 
 	// Make sure our stack cookie is still with us
 	assert(cookie == 0xfeedface);
-	cprintf("T_GPFLT succeed\n");
+	//cprintf("T_GPFLT succeed\n");
 	*argsp = NULL;	// recovery mechanism not needed anymore
 }
 

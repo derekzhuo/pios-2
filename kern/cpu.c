@@ -99,11 +99,14 @@ cpu_alloc(void)
 {
 	// Pointer to the cpu.next pointer of the last CPU on the list,
 	// for chaining on new CPUs in cpu_alloc().  Note: static.
+	// hong:
+	// the local static variable cpu_tail will still exist even the function cpu_alloc return
 	static cpu **cpu_tail = &cpu_boot.next;
 
 	pageinfo *pi = mem_alloc();
 	assert(pi != 0);	// shouldn't be out of memory just yet!
 
+	// hong: get one page address space for the cpu struct
 	cpu *c = (cpu*) mem_pi2ptr(pi);
 
 	// Clear the whole page for good measure: cpu struct and kernel stack
@@ -132,9 +135,11 @@ cpu_alloc(void)
 void
 cpu_bootothers(void)
 {
+	// _start = 0x1075b4   _size = 0x6a
+	// hong:
+	// bootother.S
 	extern uint8_t _binary_obj_boot_bootother_start[],
 			_binary_obj_boot_bootother_size[];
-
 	if (!cpu_onboot()) {
 		// Just inform the boot cpu we've booted.
 		xchg(&cpu_cur()->booted, 1);
@@ -157,6 +162,7 @@ cpu_bootothers(void)
 		lapic_startcpu(c->id, (uint32_t)code);
 
 		// Wait for cpu to get through bootstrap.
+		// hong : ??????????????
 		while(c->booted == 0)
 			;
 	}

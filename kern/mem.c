@@ -26,6 +26,7 @@ size_t mem_npage;		// Total number of physical memory pages
 pageinfo *mem_pageinfo;		// Metadata array indexed by page number
 
 pageinfo *mem_freelist;		// Start of free page list
+spinlock* freelist_lock;
 
 //pageinfo tmp_paginfo[1024*1024*1024/PAGESIZE];
 pageinfo tmp_mem_pageinfo[1024*1024*1024/PAGESIZE];
@@ -37,12 +38,14 @@ void
 mem_init(void)
 {
 	extern char start[], edata[], end[];
+	/*
 	cprintf("start : 0x%x, 0x%x\n",start, &start[0]);
 	cprintf("edata : 0x%x\n",edata);
 	cprintf("end : 0x%x, 0x%x\n",end, &end[0]);
 	cprintf("&mem_pageinfo : 0x%x\n",&mem_pageinfo);
 	cprintf("&mem_freelist : 0x%x\n",&mem_freelist);
-	cprintf("&tmp_paginfo : 0x%x\n",&tmp_mem_pageinfo);
+	cprintf("&tmp_paginfo : 0x%x\n",&tmp_mem_pageinfo);*/
+	
 	if (!cpu_onboot())	// only do once, on the boot CPU
 		return;
 
@@ -93,6 +96,7 @@ mem_init(void)
 	//     Hint: the linker places the kernel (see start and end above),
 	//     but YOU decide where to place the pageinfo array.
 	// Change the code to reflect this.
+	spinlock_init(freelist_lock);
 	pageinfo **freetail = &mem_freelist;
 	int i;
 	uint32_t page_start;
@@ -149,12 +153,12 @@ mem_alloc(void)
 {
 	// Fill this function in
 	// Fill this function in.
-	// hong: 
-	// how to handle multiprocessor operation, where is the lock
 	if (mem_freelist == NULL)
 		return NULL;
+	spinlock_acquire(freelist_lock);
 	pageinfo *result = mem_freelist;
 	mem_freelist = mem_freelist->free_next;
+	spinlock_release(freelist_lock);
 	return result;
 }
 
@@ -167,8 +171,10 @@ mem_free(pageinfo *pi)
 {
 	// Fill this function in.
 	assert(pi->refcount == 0);
+	spinlock_acquire(freelist_lock);
 	pi->free_next = mem_freelist;
 	mem_freelist = pi;
+	spinlock_release(freelist_lock);
 }
 
 //

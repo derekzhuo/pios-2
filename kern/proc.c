@@ -1,3 +1,4 @@
+
 /*
  * PIOS process management.
  *
@@ -23,15 +24,22 @@ proc proc_null;		// null process - just leave it initialized to 0
 proc *proc_root;	// root process, once it's created in init()
 
 // LAB 2: insert your scheduling data structure declarations here.
-
+struct {
+	spinlock lock;
+	proc * ready_head;
+}proc_ready_que;
 
 void
 proc_init(void)
 {
-	if (!cpu_onboot())
-		return;
-
+	if (!cpu_onboot()) {
+		return ;
+	}
 	// your module initialization code here
+	// hong: add by me
+	spinlock_init_(&proc_ready_que.lock, "proc_ready_que",1);
+	proc_ready_que.ready_head = NULL;
+	
 }
 
 // Allocate and initialize a new proc as child 'cn' of parent 'p'.
@@ -62,11 +70,28 @@ proc_alloc(proc *p, uint32_t cn)
 	return cp;
 }
 
+// hong >>>>> 
 // Put process p in the ready state and add it to the ready queue.
+// hong:so that this or some other CPU will eventually run the process at some future invocation of the scheduler. 
 void
 proc_ready(proc *p)
 {
-	panic("proc_ready not implemented");
+	// hong:
+	// add by me
+	assert(p->state != PROC_READY);
+	p->state = PROC_READY;
+	p->readynext = NULL;
+	spinlock_acquire(&proc_ready_que.lock);
+	if (proc_ready_que.ready_head == NULL) {
+		proc_ready_que.ready_head = p;
+	} else {
+		proc *cur = proc_ready_que.ready_head;
+		while(cur->readynext != NULL) {
+			cur = cur->readynext;
+		}
+		cur->readynext =  p;
+	}
+	spinlock_release(&proc_ready_que.lock);
 }
 
 // Save the current process's state before switching to another process.
@@ -90,19 +115,42 @@ proc_wait(proc *p, proc *cp, trapframe *tf)
 	panic("proc_wait not implemented");
 }
 
+
+// hong >>>>> 
+// hong:  Remove some process from the ready queue and run it.
+// 	If the ready queue is currently empty,just spin until some other CPU puts some work into the ready queue.
+// 	(For good measure, use the pause() function discussed above in the ready loop, although this doesn't affect correctness.) 
 void gcc_noreturn
 proc_sched(void)
 {
-	panic("proc_sched not implemented");
+	// hong: add by me
+	proc * cur;
+	for(;;){
+		spinlock_acquire(&proc_ready_que.lock);
+		if(proc_ready_que.ready_head != NULL) {
+			cur = proc_ready_que.ready_head;
+			assert(cur->state == PROC_READY);
+			proc_ready_que.ready_head = proc_ready_que.ready_head->readynext;
+			proc_run(cur);
+		}
+		spinlock_release(&proc_ready_que.lock);
+	}
 }
 
+
+// hong >>>>> 
 // Switch to and run a specified process, which must already be locked.
+// hong:	Place process p in the PROC_RUN state,mark it as running on this CPU and run it
+// This function does not return because it is expected to call trap_return() and enter user space to run the process. 
 void gcc_noreturn
 proc_run(proc *p)
 {
-	panic("proc_run not implemented");
+	p->runcpu = cpu_cur();
+	p->state = PROC_RUN;
+	trap_return(&p->sv.tf);
 }
 
+//// hong >>>>> 
 // Yield the current CPU to another ready process.
 // Called while handling a timer interrupt.
 void gcc_noreturn
