@@ -45,7 +45,17 @@ trap_init_idt(void)
 	 	SETGATE(idt[i], 1, CPU_GDT_KCODE, vectors[i],3);
 	 }
 	 SETGATE(idt[30], 1, CPU_GDT_KCODE, vectors[30],3);
-	 SETGATE(idt[48], 1, CPU_GDT_KCODE, vectors[48],3);
+	 
+	 SETGATE(idt[32 + 0], 1, CPU_GDT_KCODE, vectors[32],3);//IRQ_TIMER
+	 SETGATE(idt[32 + 1], 1, CPU_GDT_KCODE, vectors[33],3);//IRQ_KBD
+	 SETGATE(idt[32 + 4], 1, CPU_GDT_KCODE, vectors[36],3);//IRQ_SERIAL
+	 SETGATE(idt[32 + 7], 1, CPU_GDT_KCODE, vectors[39],3);//IRQ_SPURIOUS
+	 SETGATE(idt[32 + 14], 1, CPU_GDT_KCODE, vectors[46],3);//IRQ_IDE
+
+	 SETGATE(idt[48], 1, CPU_GDT_KCODE, vectors[48],3);//T_SYSCALL
+	 SETGATE(idt[49], 1, CPU_GDT_KCODE, vectors[49],3);//T_LTIMER
+	 SETGATE(idt[50], 1, CPU_GDT_KCODE, vectors[450],3);//T_LERROR
+	
 	//panic("trap_init() not implemented.");
 }
 
@@ -133,7 +143,11 @@ trap(trapframe *tf)
 	// The user-level environment may have set the DF flag,
 	// and some versions of GCC rely on DF being clear.
 	asm volatile("cld" ::: "cc");
-
+	
+	// hong : add by me 
+	cli();
+	//
+	
 	// If this trap was anticipated, just use the designated handler.
 	cpu *c = cpu_cur();
 	if (c->recover)
@@ -146,8 +160,19 @@ trap(trapframe *tf)
 	}
 	
 	switch(tf->trapno) {
-		case T_LTIMER: ;
-		case T_IRQ0 + IRQ_SPURIOUS: ;
+		case T_IRQ0 + IRQ_TIMER: panic("IRQ_TIMER occur\n"); break;
+		case T_IRQ0 + IRQ_KBD: panic("IRQ_KBD occur\n"); break;
+		case T_IRQ0 + IRQ_SERIAL: panic("IRQ_SERIAL occur\n"); break;
+		case T_IRQ0 + IRQ_SPURIOUS: panic("IRQ_SPURIOUS occur\n"); break;
+		case T_IRQ0 + IRQ_IDE: panic("IRQ_IDE occur\n"); break;
+		
+		case T_LTIMER: 
+			cprintf("T_LTIMER occur\n"); 
+			lapic_eoi();
+			proc_yield(tf);
+			break;
+		case T_LERROR: panic("T_LERROR occur\n"); break;
+		
 		default: panic("unhandle trapno in switch(tf->trapno)\n");
 	}
 

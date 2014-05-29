@@ -135,7 +135,7 @@ include lib/Makefrag
 
 
 
-NCPUS = 1
+NCPUS = 2
 IMAGES = $(OBJDIR)/kern/kernel.img
 QEMUOPTS = -smp $(NCPUS) -hda $(OBJDIR)/kern/kernel.img -serial mon:stdio \
 		-k en-us -m 1100M

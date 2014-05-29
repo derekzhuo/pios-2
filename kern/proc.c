@@ -99,6 +99,7 @@ proc_alloc(proc *p, uint32_t cn)
 	cp->sv.tf.es = CPU_GDT_UDATA | 3;
 	cp->sv.tf.cs = CPU_GDT_UCODE | 3;
 	cp->sv.tf.ss = CPU_GDT_UDATA | 3;
+	cp->sv.tf.eflags = FL_IF;
 	if (p)
 		p->child[cn] = cp;
 	return cp;
@@ -197,9 +198,9 @@ proc_sched(void)
 	proc * cur;
 	for (;;){
 	//cprintf("cpu[%d] in proc_sched\n",cpu_cur()->id);
-    proc_log(proc_ready_que.lock, LOCK_ACQUIRE);
+   		 proc_log(proc_ready_que.lock, LOCK_ACQUIRE);
 		spinlock_acquire(&proc_ready_que.lock);
-    proc_log(proc_ready_que.lock, LOCK_GET);
+    	proc_log(proc_ready_que.lock, LOCK_GET);
 		if (proc_ready_que.ready_head != NULL) {
 			cur = proc_ready_que.ready_head;
 			proc_ready_que.ready_head =  proc_ready_que.ready_head->readynext;
@@ -208,7 +209,7 @@ proc_sched(void)
 		} else {
 			pause();
 		}
-    proc_log(proc_ready_que.lock, LOCK_RELEASE);
+    	proc_log(proc_ready_que.lock, LOCK_RELEASE);
 		spinlock_release(&proc_ready_que.lock);
 	}
 }
@@ -247,13 +248,7 @@ proc_yield(trapframe *tf)
 {
 	//cprintf("cpu[%d] in proc_ready\n",cpu_cur()->id);
 	proc *p = cpu_cur()->proc;
-    proc_log(p->lock, LOCK_ACQUIRE);
-	spinlock_acquire(&(p->lock));
-    proc_log(p->lock, LOCK_GET);
-	//p->state = PROC_READY;
-	memmove(&(p->sv.tf), tf, sizeof(trapframe));
-    proc_log(p->lock, LOCK_RELEASE);
-	spinlock_release(&(p->lock));
+	proc_save(p, tf, 1);
 	proc_ready(p);
 	proc_sched();
 }
@@ -277,7 +272,7 @@ proc_ret(trapframe *tf, int entry)
 	spinlock_release(&(child->lock));
 	proc_save(child, tf, entry);
 	if ((parent->state == PROC_WAIT) && (parent->waitchild == child)) {
-		proc_ready(parent);
+		proc_ready(parent); //
 	}
 	proc_sched();
 	//panic("proc_ret not implemented");

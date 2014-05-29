@@ -80,24 +80,28 @@ TRAPHANDLER_NOEC(vector27, 27)
 TRAPHANDLER_NOEC(vector28, 28)
 TRAPHANDLER_NOEC(vector29, 29)
 TRAPHANDLER_NOEC(vector30, 30)
+
+TRAPHANDLER_NOEC(vector32, 32)
+TRAPHANDLER_NOEC(vector33, 33)
+TRAPHANDLER_NOEC(vector36, 36)
+TRAPHANDLER_NOEC(vector39, 39)
+TRAPHANDLER_NOEC(vector46, 46)
+
+
+
 TRAPHANDLER_NOEC(vector48, 48)
+
+TRAPHANDLER_NOEC(vector49, 49)
+TRAPHANDLER_NOEC(vector50, 50)
+
 /*
  * Lab 1: Your code here for _alltraps
  */
 .globl	_alltraps
 _alltraps:
 	# Build trap frame.
-  #pushw %ds
-  #pushw %ds
-	#pushw %es
-	#pushw %es
   pushl %ds
   pushl %es
-
-	#pushw %ds   #pushl %fs  # ignore %fs
-  #pushw %ds
-  #pushw %es   #pushl %gs  # ignore %gs
-  #pushw %es
 	pushl %fs
   pushl %gs
 
@@ -134,21 +138,14 @@ trap_return:
   movl (%esp), %esp
  	popal
 
-  #popw %es  # ignore %gs
-  #popw %es
- # popw %ds  # ignore %fs
-  #popw %ds
+
   popl %gs
   popl %fs
-
-  #popw %es  # popl es
- 	#popw %es
-  #popw %ds  # popl ds
- 	#popw %ds
   popl %es
   popl %ds
 
  	addl $0x8, %esp		# trapno and errcode
+ 	sti
  	iret
 1:	jmp	1b		// just spin
 
@@ -190,20 +187,22 @@ vectors:
   .long vector29
   .long vector30
   .long 0
+  .long vector32
+  .long vector33
+  .long 0
+  .long 0
+  .long vector36
+  .long 0
+  .long 0
+  .long vector39
   .long 0
   .long 0
   .long 0
   .long 0
   .long 0
   .long 0
-  .long 0
-  .long 0
-  .long 0
-  .long 0
-  .long 0
-  .long 0
-  .long 0
-  .long 0
-  .long 0
+  .long vector46
   .long 0
   .long vector48
+  .long vector49
+  .long vector50
