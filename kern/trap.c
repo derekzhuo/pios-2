@@ -173,7 +173,9 @@ trap(trapframe *tf)
 			break;
 		case T_LERROR: panic("T_LERROR occur\n"); break;
 		
-		default: panic("unhandle trapno in switch(tf->trapno)\n");
+		default:
+			cprintf("unhandle trapno(%d) in switch(tf->trapno)\n",tf->trapno);
+			proc_ret(tf, -1);
 	}
 
 	

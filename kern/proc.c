@@ -162,10 +162,15 @@ proc_save(proc *p, trapframe *tf, int entry)
     proc_log(p->lock, LOCK_GET);
 	
 	switch (entry) {
-	case -1 : panic("unknow how to handle proc_save if entry == -1"); break;
-	case 0 : tf->eip = (uintptr_t)((char *)tf->eip - 2 );
-	case 1 : memmove(&(p->sv.tf), tf, sizeof(trapframe)); break;
+	case -1 : 
+		cprintf("proc_save() entry(-1)\n"); 
+		memmove(&(p->sv.tf), tf, sizeof(trapframe)); break;
+	case 0 : 
+		tf->eip = (uintptr_t)((char *)tf->eip - 2 );
+	case 1 : 
+		memmove(&(p->sv.tf), tf, sizeof(trapframe)); break;
 	default : panic("unknow entry in proc_save\n");
+	
 	}
 	
     proc_log(p->lock, LOCK_RELEASE);
@@ -294,7 +299,7 @@ proc_ret(trapframe *tf, int entry)
 	
 	proc_save(child, tf, entry);
 	if ((parent->state == PROC_WAIT) && (parent->waitchild == child)) {
-		proc_ready(parent); //
+		proc_ready(parent);
 	}
 	proc_sched();
 
