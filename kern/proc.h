@@ -19,6 +19,15 @@
 #include <kern/spinlock.h>
 #define PROC_CHILDREN	256	// Max # of children a process can have
 
+// hong:
+// 1) PROC_STOP : passively sitting under the control of its immediate parent process.
+// could only run by PUT system call by its parent
+// 2) PROC_WAIT: complementary to the PROC_STOP, waiting for one of its children to 
+// finish executing and "return to " the parent by entering the PROC_STOP
+
+// 3) PROC_READY : started by its parent process, ready to run
+// 4) PROC_RUN : currently running on some CPU,
+
 typedef enum proc_state {
 	PROC_STOP	= 0,	// Passively waiting for parent to run it
 	PROC_READY,		// Scheduled to run but not running now
@@ -45,6 +54,8 @@ typedef struct proc {
 
 	// Save area for user-visible state when process is not running.
 	procstate	sv;
+	// hong: add by me for debug
+	char id[100];
 } proc;
 
 #define proc_cur()	(cpu_cur()->proc)

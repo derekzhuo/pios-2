@@ -18,6 +18,12 @@
 #include <kern/init.h>
 
 
+typedef enum log_type {
+	LOCK_ACQUIRE	= 0,	
+	LOCK_GET,	
+	LOCK_RELEASE,	
+} log_type;
+
 
 proc proc_null;		// null process - just leave it initialized to 0
 
@@ -29,15 +35,30 @@ struct {
 	proc * ready_head;
 }proc_ready_que;
 
+void 
+proc_log(spinlock lock, log_type type) {
+	return ;
+	switch(type) {
+		case LOCK_ACQUIRE: cprintf("cpu[%d]: acquire lock:%s\n",cpu_cur()->id, lock.file); break;
+		case LOCK_GET: cprintf("cpu[%d]: get lock:%s\n",cpu_cur()->id, lock.file);break;
+		case LOCK_RELEASE: cprintf("cpu[%d]: release lock:%s\n",cpu_cur()->id, lock.file);break;
+		default: panic("wrong proc_log type\n");
+	}
+}
 void
 proc_init(void)
 {
-	if (!cpu_onboot()) {
+	static int inited = 0;
+	if(inited == 1)
 		return ;
-	}
+ 	//if (!cpu_onboot()) {
+	//	return ;
+	//}
 	// your module initialization code here
 	// hong: add by me
+	inited = 1;
 	spinlock_init_(&proc_ready_que.lock, "proc_ready_que",1);
+	cprintf("lock name : %s",proc_ready_que.lock.file);
 	proc_ready_que.ready_head = NULL;
 	
 }
@@ -48,13 +69,28 @@ proc *
 proc_alloc(proc *p, uint32_t cn)
 {
 	pageinfo *pi = mem_alloc();
+	int i;
 	if (!pi)
 		return NULL;
 	mem_incref(pi);
 
 	proc *cp = (proc*)mem_pi2ptr(pi);
 	memset(cp, 0, sizeof(proc));
-	spinlock_init(&cp->lock);
+	// hong: add by me 
+	
+	if(p != NULL) {	
+		memmove(cp->id,p->id,strlen(p->id)*sizeof(char));
+		i = strlen(p->id);
+	} else {
+		i = 0;
+	}
+	cp->id[i] = '[';
+	cp->id[i + 1] = cn+ '0';
+	cp->id[i + 2] = ']';
+	cp->id[i + 3] = '\0';
+	//
+	
+	spinlock_init_(&cp->lock,cp->id,1);
 	cp->parent = p;
 	cp->state = PROC_STOP;
 
@@ -63,8 +99,6 @@ proc_alloc(proc *p, uint32_t cn)
 	cp->sv.tf.es = CPU_GDT_UDATA | 3;
 	cp->sv.tf.cs = CPU_GDT_UCODE | 3;
 	cp->sv.tf.ss = CPU_GDT_UDATA | 3;
-
-
 	if (p)
 		p->child[cn] = cp;
 	return cp;
@@ -76,12 +110,20 @@ proc_alloc(proc *p, uint32_t cn)
 void
 proc_ready(proc *p)
 {
+	//cprintf("cpu[%d] in proc_ready\n",cpu_cur()->id);
 	// hong:
 	// add by me
 	assert(p->state != PROC_READY);
+    proc_log(p->lock, LOCK_ACQUIRE);
+	spinlock_acquire(&(p->lock));
+    proc_log(p->lock, LOCK_GET);
 	p->state = PROC_READY;
 	p->readynext = NULL;
+    proc_log(p->lock, LOCK_RELEASE);
+	spinlock_release(&(p->lock));
+    proc_log( proc_ready_que.lock, LOCK_ACQUIRE);
 	spinlock_acquire(&proc_ready_que.lock);
+    proc_log( proc_ready_que.lock, LOCK_GET);
 	if (proc_ready_que.ready_head == NULL) {
 		proc_ready_que.ready_head = p;
 	} else {
@@ -91,9 +133,11 @@ proc_ready(proc *p)
 		}
 		cur->readynext =  p;
 	}
+    proc_log(proc_ready_que.lock, LOCK_RELEASE);
 	spinlock_release(&proc_ready_que.lock);
 }
 
+// hong:>>>>
 // Save the current process's state before switching to another process.
 // Copies trapframe 'tf' into the proc struct,
 // and saves any other relevant state such as FPU state.
@@ -104,6 +148,20 @@ proc_ready(proc *p)
 void
 proc_save(proc *p, trapframe *tf, int entry)
 {
+	//cprintf("cpu[%d] in proc_save\n",cpu_cur()->id);
+	// hong: 
+	// note : save rather than assign(=)
+    proc_log(p->lock, LOCK_ACQUIRE);
+	spinlock_acquire(&(p->lock));
+    proc_log(p->lock, LOCK_GET);
+	switch (entry) {
+	case -1 : panic("unknow how to handle proc_save if entry == -1"); break;
+	case 0 : tf->eip = (uintptr_t)((char *)tf->eip - 2 );
+	case 1 : memmove(&(p->sv.tf), tf, sizeof(trapframe)); break;
+	default : panic("unknow entry in proc_save\n");
+	}
+    proc_log(p->lock, LOCK_RELEASE);
+	spinlock_release(&(p->lock));
 }
 
 // Go to sleep waiting for a given child process to finish running.
@@ -112,7 +170,19 @@ proc_save(proc *p, trapframe *tf, int entry)
 void gcc_noreturn
 proc_wait(proc *p, proc *cp, trapframe *tf)
 {
-	panic("proc_wait not implemented");
+
+	//cprintf("cpu[%d] in proc_wait\n",cpu_cur()->id);
+	// hong: add by me
+    proc_log(p->lock, LOCK_ACQUIRE);
+	spinlock_acquire(&(p->lock));
+    proc_log(p->lock, LOCK_GET);
+	p->state = PROC_WAIT;
+	p->waitchild = cp;
+    proc_log(p->lock, LOCK_RELEASE);
+	spinlock_release(&(p->lock));
+	// system call blocked ,must rollback
+	proc_save(p, tf, 0);
+	proc_yield(&(p->sv.tf));
 }
 
 
@@ -125,14 +195,20 @@ proc_sched(void)
 {
 	// hong: add by me
 	proc * cur;
-	for(;;){
+	for (;;){
+	//cprintf("cpu[%d] in proc_sched\n",cpu_cur()->id);
+    proc_log(proc_ready_que.lock, LOCK_ACQUIRE);
 		spinlock_acquire(&proc_ready_que.lock);
-		if(proc_ready_que.ready_head != NULL) {
+    proc_log(proc_ready_que.lock, LOCK_GET);
+		if (proc_ready_que.ready_head != NULL) {
 			cur = proc_ready_que.ready_head;
+			proc_ready_que.ready_head =  proc_ready_que.ready_head->readynext;
 			assert(cur->state == PROC_READY);
-			proc_ready_que.ready_head = proc_ready_que.ready_head->readynext;
 			proc_run(cur);
+		} else {
+			pause();
 		}
+    proc_log(proc_ready_que.lock, LOCK_RELEASE);
 		spinlock_release(&proc_ready_que.lock);
 	}
 }
@@ -145,20 +221,44 @@ proc_sched(void)
 void gcc_noreturn
 proc_run(proc *p)
 {
+	//cprintf("cpu[%d] in proc_run\n",cpu_cur()->id);
+	cpu_cur()->proc = p;
 	p->runcpu = cpu_cur();
 	p->state = PROC_RUN;
+    proc_log(proc_ready_que.lock, LOCK_RELEASE);
+	spinlock_release(&proc_ready_que.lock);
+	//cprintf("proc_run : eip = 0x%x , cs = 0x%x\n",p->sv.tf.eip,p->sv.tf.esp);
+	//cprintf("cpu[%d] run proc%s\n",cpu_cur()->id,p->id);
 	trap_return(&p->sv.tf);
 }
 
 //// hong >>>>> 
 // Yield the current CPU to another ready process.
 // Called while handling a timer interrupt.
+// hong : 
+// 1) Put the currently running process on this CPU back in the PROC_READY state 
+// and yield its CPU to some other ready process
+// 2)  This function is called with a pointer to a trapframe containing the user state of the process that is yielding the CPU,
+// which was typically pushed on the kernel stack on kernel entry. 
+// 3) Since the kernel stack is reset on switching to a new process, the old process's state needs to 
+// be saved in its proc struct before switching to the new process.
 void gcc_noreturn
 proc_yield(trapframe *tf)
 {
-	panic("proc_yield not implemented");
+	//cprintf("cpu[%d] in proc_ready\n",cpu_cur()->id);
+	proc *p = cpu_cur()->proc;
+    proc_log(p->lock, LOCK_ACQUIRE);
+	spinlock_acquire(&(p->lock));
+    proc_log(p->lock, LOCK_GET);
+	//p->state = PROC_READY;
+	memmove(&(p->sv.tf), tf, sizeof(trapframe));
+    proc_log(p->lock, LOCK_RELEASE);
+	spinlock_release(&(p->lock));
+	proc_ready(p);
+	proc_sched();
 }
 
+// hong>>>>>
 // Put the current process to sleep by "returning" to its parent process.
 // Used both when a process calls the SYS_RET system call explicitly,
 // and when a process causes an unhandled trap in user mode.
@@ -166,7 +266,21 @@ proc_yield(trapframe *tf)
 void gcc_noreturn
 proc_ret(trapframe *tf, int entry)
 {
-	panic("proc_ret not implemented");
+	proc *child = cpu_cur()->proc;
+	proc *parent = child->parent;
+	assert(child->state != PROC_STOP);
+    proc_log(child->lock, LOCK_ACQUIRE);
+	spinlock_acquire(&(child->lock));
+    proc_log(child->lock, LOCK_GET);
+	child->state = PROC_STOP;
+    proc_log(child->lock, LOCK_RELEASE);
+	spinlock_release(&(child->lock));
+	proc_save(child, tf, entry);
+	if ((parent->state == PROC_WAIT) && (parent->waitchild == child)) {
+		proc_ready(parent);
+	}
+	proc_sched();
+	//panic("proc_ret not implemented");
 }
 
 // Helper functions for proc_check()
@@ -207,8 +321,8 @@ proc_check(void)
 		cprintf("waiting for child %d\n", i);
 		sys_get(SYS_REGS, i, &child_state, NULL, NULL, 0);
 	}
+	//cprintf("proc_check() 2-child test succeeded\n");
 	cprintf("proc_check() 2-child test succeeded\n");
-
 	// (Re)start all four children, and wait for them.
 	// This will require preemptive scheduling to complete
 	// if we have less than 4 CPUs.
@@ -257,8 +371,9 @@ static void child(int n)
 		int i;
 		for (i = 0; i < 10; i++) {
 			cprintf("in child %d count %d\n", n, i);
-			while (pingpong != n)
+			while (pingpong != n) {
 				pause();
+			}
 			xchg(&pingpong, !pingpong);
 		}
 		sys_ret();

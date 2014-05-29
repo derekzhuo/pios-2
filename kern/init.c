@@ -38,7 +38,6 @@ static char gcc_aligned(16) user_stack[PAGESIZE];
 #endif
 extern char ROOTEXE_START[];
 
-
 // Called first from entry.S on the bootstrap processor,
 // and later from boot/bootother.S on all other processors.
 // As a rule, "init" functions in PIOS are called once on EACH processor.
@@ -51,7 +50,7 @@ init(void)
 	extern char start[], edata[], end[];
 	
 	// Before anything else, complete the ELF loading process.
-	// Clear all uninitialized global data (BSS) in our program,
+	// Clear all uninitialized global data (BSS) in our program
 	// ensuring that all static/global variables start out zero.
 	if (cpu_onboot())
 		memset(edata, 0, end - edata);
@@ -61,18 +60,16 @@ init(void)
 	// hong :
 	// the first thing the kernel does is initialize the console device driver so that your kernel can produce visible output. 
 	cons_init();
-	
 	// Lab 1: test cprintf and debug_trace
 	cprintf("1234 decimal is %o octal!\n", 1234);
 	debug_check();	
 	// Initialize and load the bootstrap CPU's GDT, TSS, and IDT.
 	cpu_init();
 	trap_init();
-	
 	// Physical memory detection/initialization.
 	// Can't call mem_alloc until after we do this!
 	mem_init();
-
+	
 	// Lab 2: check spinlock implementation
 	if (cpu_onboot())
 		spinlock_check();
@@ -88,12 +85,15 @@ init(void)
 
 	// Initialize the process management code.
 	proc_init();
-
+	
 	// Lab 1: change this so it enters user() in user mode,
 	// running on the user_stack declared above,
 	// instead of just calling user() directly.
-	
-	 /*trapframe tf = {
+	/*
+	if (!cpu_onboot())
+			while(1);
+			
+	 trapframe tf = {
 		gs: CPU_GDT_UDATA | 3,
 		fs: CPU_GDT_UDATA | 3,
 		es: CPU_GDT_UDATA | 3,
@@ -104,16 +104,19 @@ init(void)
 		eip: (uint32_t)user,
 		esp: (uint32_t)&user_stack[PAGESIZE],
 	};
+	 	cprintf ("to user\n");
 	trap_return(&tf);*/
-
 	proc *user_proc;
-	user_proc = proc_alloc(NULL,0);
-	user_proc->sv.tf.esp = (uint32_t)&user_stack[PAGESIZE];
-	user_proc->sv.tf.eip =  (uint32_t)user;
-	user_proc->sv.tf.eflags =  FL_IOPL_3;
-	user_proc->sv.tf.gs = CPU_GDT_UDATA | 3;
-	user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
-	proc_ready(user_proc);
+	if(cpu_onboot()) {
+		
+		user_proc = proc_alloc(NULL,0);
+		user_proc->sv.tf.esp = (uint32_t)&user_stack[PAGESIZE];
+		user_proc->sv.tf.eip =  (uint32_t)user;
+		user_proc->sv.tf.eflags = FL_IOPL_3;
+		user_proc->sv.tf.gs = CPU_GDT_UDATA | 3;
+		user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
+		proc_ready(user_proc);
+	}
 	proc_sched();
 	user();
 }
@@ -125,12 +128,11 @@ void
 user()
 {
 	// hong: system haven't complete 
-	//cprintf("in user()\n");
+	 cprintf("in user()\n");
 	assert(read_esp() > (uint32_t) &user_stack[0]);
 	// hong:
 	// sizeof(user_stack) == 4096
 	assert(read_esp() < (uint32_t) &user_stack[sizeof(user_stack)]);
-
 	// Check the system call and process scheduling code.
 	proc_check();
 

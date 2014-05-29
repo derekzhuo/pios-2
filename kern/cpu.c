@@ -84,8 +84,6 @@ void cpu_init()
 
 	// hong:
 	// add by me
-	//TODO : init TSS
-
 	c->tss.ts_ss0 = CPU_GDT_KDATA;
 	c->tss.ts_esp0 = (uintptr_t)(c->kstackhi);
 	c->gdt[CPU_GDT_TSS >> 3] = SEGDESC16(0,STS_T32A,(uintptr_t)(&c->tss),sizeof(c->tss)-1,0);

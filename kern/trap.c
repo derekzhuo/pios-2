@@ -140,13 +140,24 @@ trap(trapframe *tf)
 		c->recover(tf, c->recoverdata);
 
 	// Lab 2: your trap handling code here!
+	if (tf->trapno==T_SYSCALL){
+		syscall(tf);
+		panic("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!system call return to trap!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+	}
+	
+	switch(tf->trapno) {
+		case T_LTIMER: ;
+		case T_IRQ0 + IRQ_SPURIOUS: ;
+		default: panic("unhandle trapno in switch(tf->trapno)\n");
+	}
 
+	
 	// If we panic while holding the console lock,
 	// release it so we don't get into a recursive panic that way.
 	if (spinlock_holding(&cons_lock))
 		spinlock_release(&cons_lock);
 	trap_print(tf);
-	panic("unhandled trap");
+	panic("unhandled trqap : %d\n",tf->trapno);
 }
 
 
@@ -208,7 +219,6 @@ trap_check(void **argsp)
 	volatile int cookie = 0xfeedface;
 	volatile trap_check_args args;
 	*argsp = (void*)&args;	// provide args needed for trap recovery
-
 	// Try a divide by zero trap.
 	// Be careful when using && to take the address of a label:
 	// some versions of GCC (4.4.2 at least) will incorrectly try to
