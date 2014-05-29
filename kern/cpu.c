@@ -34,12 +34,28 @@ cpu cpu_boot = {
 		[0] = SEGDESC_NULL,
 
 		// 0x08 - kernel code segment
+		// hong:
+		// why the first arg in SEGDESC32(app) is 1????? ????????????????
 		[CPU_GDT_KCODE >> 3] = SEGDESC32(1, STA_X | STA_R, 0x0,
 					0xffffffff, 0),
 
 		// 0x10 - kernel data segment
 		[CPU_GDT_KDATA >> 3] = SEGDESC32(1, STA_W, 0x0,
 					0xffffffff, 0),
+
+		// hong: 
+		// add by me
+		[CPU_GDT_UCODE >> 3] = SEGDESC32(1, STA_X|STA_R,0x0,
+					0xffffffff, 3 ),
+		
+		[CPU_GDT_UDATA >> 3] = SEGDESC32(1, STA_W, 0x0, 
+					0xffffffff, 3),
+
+		[CPU_GDT_UDTLS >> 3] = SEGDESC32(1, STA_W, 0x0, 
+					0xffffffff, 3),
+
+		 //c->gdt[SEG_UCODE] = SEG(STA_X|STA_R, 0, 0xffffffff, DPL_USER);
+ 		 //c->gdt[SEG_UDATA] = SEG(STA_W, 0, 0xffffffff, DPL_USER);
 	},
 
 	magic: CPU_MAGIC
@@ -65,6 +81,14 @@ void cpu_init()
 
 	// We don't need an LDT.
 	asm volatile("lldt %%ax" :: "a" (0));
+
+	// hong:
+	// add by me
+	c->tss.ts_ss0 = CPU_GDT_KDATA;
+	c->tss.ts_esp0 = (uintptr_t)(c->kstackhi);
+	c->gdt[CPU_GDT_TSS >> 3] = SEGDESC16(0,STS_T32A,(uintptr_t)(&c->tss),sizeof(c->tss)-1,0);
+	ltr(CPU_GDT_TSS);
+	
 }
 
 // Allocate an additional cpu struct representing a non-bootstrap processor.
@@ -73,11 +97,14 @@ cpu_alloc(void)
 {
 	// Pointer to the cpu.next pointer of the last CPU on the list,
 	// for chaining on new CPUs in cpu_alloc().  Note: static.
+	// hong:
+	// the local static variable cpu_tail will still exist even the function cpu_alloc return
 	static cpu **cpu_tail = &cpu_boot.next;
 
 	pageinfo *pi = mem_alloc();
 	assert(pi != 0);	// shouldn't be out of memory just yet!
 
+	// hong: get one page address space for the cpu struct
 	cpu *c = (cpu*) mem_pi2ptr(pi);
 
 	// Clear the whole page for good measure: cpu struct and kernel stack
@@ -106,9 +133,11 @@ cpu_alloc(void)
 void
 cpu_bootothers(void)
 {
+	// _start = 0x1075b4   _size = 0x6a
+	// hong:
+	// bootother.S
 	extern uint8_t _binary_obj_boot_bootother_start[],
 			_binary_obj_boot_bootother_size[];
-
 	if (!cpu_onboot()) {
 		// Just inform the boot cpu we've booted.
 		xchg(&cpu_cur()->booted, 1);
@@ -131,6 +160,7 @@ cpu_bootothers(void)
 		lapic_startcpu(c->id, (uint32_t)code);
 
 		// Wait for cpu to get through bootstrap.
+		// hong : ??????????????
 		while(c->booted == 0)
 			;
 	}

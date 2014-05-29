@@ -86,6 +86,96 @@ do_cputs(trapframe *tf, uint32_t cmd)
 
 	trap_return(tf);	// syscall completed
 }
+// hong:  sys_put(uint32_t flags, uint8_t child, cpustate *cpu):
+// Initialize one of the calling process's 256 child process slots, as indicated by child, 
+// and optionally start the child process running concurrently with the parent. 
+// The flags argument :
+//     1) SYS_REGS :
+//		calling process wishes to set the register state of the child proces from cpu->tf
+//		otherwise the child's state remains unmodified (or initialized to all 0's, if the child is newly created).
+// 	    >>The kernel shouldn't allow user processes to set all register state in another process: in particular, 
+// 		the kernel should force all the segment registers in the child's trapframe to the usual user-mode code and data segments, 
+//		and should only allow "non-sensitive" bits in EFLAGS, such as the arithmetic condition code bits,
+//		to be set via this system call.
+//     2) SYS_START : 
+//		indicates that that the child process should start executing; 
+// 	       otherwise the child remains in the stopped state
+//  This system call require :
+//  	  3) specified child to be in the PROC_STOP state
+//		 if not : 
+// 			the kernel pts the parent process to sleep waiting for the child to stop
+//		(other words: parent goes into PROC_WAIT sits there until the child enters the PROC_STOP ,at which point
+//			the parent wakes up and restarts its PUT system call as described above)
+static void
+do_put(trapframe* tf){
+	procstate *cpustate  = (procstate *)tf->regs.ebx;
+	uint32_t cn = (uint32_t)tf->regs.edx;
+	proc *parent = cpu_cur()->proc;
+	proc *child =  parent->child[cn];
+	if (child == NULL) {
+		child = proc_alloc(parent, cn);
+	}
+	if (child->state != PROC_STOP) {
+		spinlock_acquire(&(parent->lock));
+		parent->state = PROC_WAIT;
+		spinlock_release(&(parent->lock));
+		// system call blocked ,must rollback
+		proc_save(parent, tf, 0);
+	}
+	
+	if (tf->regs.eax & SYS_REGS) {
+		spinlock_acquire(&(child->lock));
+		// hong is it right ??????
+		memmove(&(child->sv.tf.regs), &(cpustate->tf.regs), sizeof(pushregs));
+		child->sv.tf.eip =  cpustate->tf.eip;
+		child->sv.tf.esp =  cpustate->tf.esp;
+		// TODO: how to put eflags
+
+		spinlock_release(&(child->lock));
+	}
+	if (tf->regs.eax & SYS_START) {
+		proc_ready(child);
+	}
+	trap_return(tf);
+}
+
+
+// hong: sys_get(uint32_t flags, uint8_t child, cpustate *cpu): 
+// Collect information from a child process. 
+// first waits for the child to stop if the child isn't already in the stopped state. 
+// The flags argument : what information the parent retrieves from the child.
+// 	SYS_REGS: 
+//		retrieve the register state of the child process; kernel copies the child's reg state into the cpu->tf
+static void
+do_get(trapframe* tf) {
+	procstate *cpustate  = (procstate *)tf->regs.ebx;
+	uint32_t  cn = (uint32_t)tf->regs.edx;
+	proc *parent = cpu_cur()->proc;
+	proc *child = parent->child[cn];
+	assert(child != NULL);
+	if (child->state != PROC_STOP) {
+		proc_wait(parent, child, tf);
+	}
+	if (tf->regs.eax & SYS_REGS) {
+		// TODO: is it right ???????
+		memmove(&(cpustate->tf), &(child->sv.tf),sizeof(trapframe));
+	} else {
+		assert(tf->regs.eax == SYS_GET);
+		cprintf("unkonw flags , tf->regs.eax : 0x%x\n",tf->regs.eax);
+	}
+	trap_return(tf);
+}
+
+
+// hong: sys_ret(void):
+// Explicitly "returns" from a child process to its parent.
+// The child process goes into the PROC_STOP state, and wakes up its parent if the parent happened to be
+// waiting for this particular child, as a result of either a sys_put() or sys_get().
+static void
+do_ret(trapframe *tf) {
+	proc_ret(tf, 1);
+}
+
 
 // Common function to handle all system calls -
 // decode the system call type and call an appropriate handler function.
@@ -95,10 +185,14 @@ syscall(trapframe *tf)
 {
 	// EAX register holds system call command/flags
 	uint32_t cmd = tf->regs.eax;
+	//cprintf("cpu[%d] in syscall()\n", cpu_cur()->id);
 	switch (cmd & SYS_TYPE) {
 	case SYS_CPUTS:	return do_cputs(tf, cmd);
 	// Your implementations of SYS_PUT, SYS_GET, SYS_RET here...
-	default:	return;		// handle as a regular trap
+	case SYS_PUT: do_put(tf); break;
+	case SYS_GET: do_get(tf); break;
+	case SYS_RET: return do_ret(tf);
+	default: panic("unhandle syscall\n"); return;		// handle as a regular trap
 	}
 }
 

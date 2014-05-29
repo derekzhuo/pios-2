@@ -92,7 +92,10 @@ cons_getc(void)
 static void
 cons_putc(int c)
 {
+	// hong:
+	// Output to a parallel printer port, printer
 	serial_putc(c);
+	// Output to the Color Graphics Adapter, Monitor
 	video_putc(c);
 }
 

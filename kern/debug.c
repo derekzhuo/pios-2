@@ -72,7 +72,28 @@ debug_warn(const char *file, int line, const char *fmt,...)
 void gcc_noinline
 debug_trace(uint32_t ebp, uint32_t eips[DEBUG_TRACEFRAMES])
 {
-	panic("debug_trace not implemented");
+
+	int i ,j;
+	uint32_t *cur_epb = (uint32_t *)ebp;
+	//cprintf("Stack backtrace:\n");
+	for(i = 0; i < DEBUG_TRACEFRAMES && cur_epb > 0; i++) {
+		//cprintf("  ebp %08x eip %08x args",cur_epb[0],cur_epb[1]);
+		eips[i] = cur_epb[1];
+		for(j = 0; j < 5; j++) {
+			//makecprintf(" %08x",cur_epb[2 + j]);
+		}
+		//cprintf("\n");make
+		cur_epb = (uint32_t *)(*cur_epb);
+	}
+	for(; i < DEBUG_TRACEFRAMES ; i++) {
+		eips[i] = 0;
+	}
+	
+	/*
+	for(i = 0; i < DEBUG_TRACEFRAMES ; i++) {
+		cprintf("eip %x\n",eips[i]);
+	}*/
+	
 }
 
 
@@ -90,7 +111,6 @@ debug_check(void)
 	// produce several related backtraces...
 	for (i = 0; i < 4; i++)
 		f1(i, eips[i]);
-
 	// ...and make sure they come out correctly.
 	for (r = 0; r < 4; r++)
 		for (i = 0; i < DEBUG_TRACEFRAMES; i++) {

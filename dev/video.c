@@ -47,6 +47,9 @@ video_init(void)
 	outb(addr_6845, 15);
 	pos |= inb(addr_6845 + 1);
 
+	// hong:
+	// crt_buf : 
+	// crt_pos: cursor position
 	crt_buf = (uint16_t*) cp;
 	crt_pos = pos;
 }
@@ -57,19 +60,25 @@ void
 video_putc(int c)
 {
 	// if no attribute given, then use black on white
+	// hong:
+	// ~0xFF -> 0xFFFFFF00
 	if (!(c & ~0xFF))
 		c |= 0x0700;
 
 	switch (c & 0xff) {
+	// hong:
+	// backspace
 	case '\b':
 		if (crt_pos > 0) {
 			crt_pos--;
 			crt_buf[crt_pos] = (c & ~0xff) | ' ';
 		}
 		break;
+	//new line
 	case '\n':
 		crt_pos += CRT_COLS;
 		/* fallthru */
+	//carriage return
 	case '\r':
 		crt_pos -= (crt_pos % CRT_COLS);
 		break;
@@ -97,6 +106,7 @@ video_putc(int c)
 	}
 
 	/* move that little blinky thing */
+	// Write cursor position
 	outb(addr_6845, 14);
 	outb(addr_6845 + 1, crt_pos >> 8);
 	outb(addr_6845, 15);
