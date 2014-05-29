@@ -167,7 +167,7 @@ trap(trapframe *tf)
 		case T_IRQ0 + IRQ_IDE: panic("IRQ_IDE occur\n"); break;
 		
 		case T_LTIMER: 
-			cprintf("T_LTIMER occur\n"); 
+			//cprintf("T_LTIMER occur\n"); 
 			lapic_eoi();
 			proc_yield(tf);
 			break;

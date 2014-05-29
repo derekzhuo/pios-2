@@ -160,7 +160,8 @@ do_get(trapframe* tf) {
 		// TODO: is it right ???????
 		memmove(&(cpustate->tf), &(child->sv.tf),sizeof(trapframe));
 	} else {
-		panic("unkonw flags , tf->regs.eax : 0x%x\n",tf->regs.eax);
+		assert(tf->regs.eax == SYS_GET);
+		cprintf("unkonw flags , tf->regs.eax : 0x%x\n",tf->regs.eax);
 	}
 	trap_return(tf);
 }

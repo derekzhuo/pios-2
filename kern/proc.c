@@ -118,13 +118,17 @@ proc_ready(proc *p)
     proc_log(p->lock, LOCK_ACQUIRE);
 	spinlock_acquire(&(p->lock));
     proc_log(p->lock, LOCK_GET);
+	
 	p->state = PROC_READY;
 	p->readynext = NULL;
+	
     proc_log(p->lock, LOCK_RELEASE);
 	spinlock_release(&(p->lock));
+	
     proc_log( proc_ready_que.lock, LOCK_ACQUIRE);
 	spinlock_acquire(&proc_ready_que.lock);
     proc_log( proc_ready_que.lock, LOCK_GET);
+	
 	if (proc_ready_que.ready_head == NULL) {
 		proc_ready_que.ready_head = p;
 	} else {
@@ -134,6 +138,7 @@ proc_ready(proc *p)
 		}
 		cur->readynext =  p;
 	}
+	
     proc_log(proc_ready_que.lock, LOCK_RELEASE);
 	spinlock_release(&proc_ready_que.lock);
 }
@@ -155,12 +160,14 @@ proc_save(proc *p, trapframe *tf, int entry)
     proc_log(p->lock, LOCK_ACQUIRE);
 	spinlock_acquire(&(p->lock));
     proc_log(p->lock, LOCK_GET);
+	
 	switch (entry) {
 	case -1 : panic("unknow how to handle proc_save if entry == -1"); break;
 	case 0 : tf->eip = (uintptr_t)((char *)tf->eip - 2 );
 	case 1 : memmove(&(p->sv.tf), tf, sizeof(trapframe)); break;
 	default : panic("unknow entry in proc_save\n");
 	}
+	
     proc_log(p->lock, LOCK_RELEASE);
 	spinlock_release(&(p->lock));
 }
@@ -174,16 +181,25 @@ proc_wait(proc *p, proc *cp, trapframe *tf)
 
 	//cprintf("cpu[%d] in proc_wait\n",cpu_cur()->id);
 	// hong: add by me
+	assert(p->state == PROC_RUN);
+	
     proc_log(p->lock, LOCK_ACQUIRE);
 	spinlock_acquire(&(p->lock));
     proc_log(p->lock, LOCK_GET);
+	
 	p->state = PROC_WAIT;
 	p->waitchild = cp;
+	
     proc_log(p->lock, LOCK_RELEASE);
 	spinlock_release(&(p->lock));
 	// system call blocked ,must rollback
+	
 	proc_save(p, tf, 0);
-	proc_yield(&(p->sv.tf));
+	// hong : 
+	// can't use proc_yield() , which is used to yied cpu, and set the current process to PROC_READY state
+	assert(cp->state != PROC_STOP);
+	proc_sched();
+
 }
 
 
@@ -223,9 +239,11 @@ void gcc_noreturn
 proc_run(proc *p)
 {
 	//cprintf("cpu[%d] in proc_run\n",cpu_cur()->id);
+	assert(p->state == PROC_READY);
 	cpu_cur()->proc = p;
 	p->runcpu = cpu_cur();
 	p->state = PROC_RUN;
+	
     proc_log(proc_ready_que.lock, LOCK_RELEASE);
 	spinlock_release(&proc_ready_que.lock);
 	//cprintf("proc_run : eip = 0x%x , cs = 0x%x\n",p->sv.tf.eip,p->sv.tf.esp);
@@ -264,18 +282,24 @@ proc_ret(trapframe *tf, int entry)
 	proc *child = cpu_cur()->proc;
 	proc *parent = child->parent;
 	assert(child->state != PROC_STOP);
+	
     proc_log(child->lock, LOCK_ACQUIRE);
 	spinlock_acquire(&(child->lock));
     proc_log(child->lock, LOCK_GET);
+	
 	child->state = PROC_STOP;
+	
     proc_log(child->lock, LOCK_RELEASE);
 	spinlock_release(&(child->lock));
+	
 	proc_save(child, tf, entry);
 	if ((parent->state == PROC_WAIT) && (parent->waitchild == child)) {
 		proc_ready(parent); //
 	}
 	proc_sched();
-	//panic("proc_ret not implemented");
+
+	// TODO: handle unhandler trap in user mode
+	
 }
 
 // Helper functions for proc_check()
