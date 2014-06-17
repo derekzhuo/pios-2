@@ -100,6 +100,17 @@ proc_alloc(proc *p, uint32_t cn)
 	cp->sv.tf.cs = CPU_GDT_UCODE | 3;
 	cp->sv.tf.ss = CPU_GDT_UDATA | 3;
 	cp->sv.tf.eflags = FL_IF;
+
+	// hong 
+	// lab3 Exercise 3. Add code to proc_alloc() to allocate and initialize a process's
+	// working and reference page directories when the process is created. 
+	cp->pdir =  pmap_newpdir();
+	cp->rpdir =  cp->pdir;
+	if (cp->pdir == NULL) {
+		panic("pmap_newpdir() faild in proc_alloc() function\n");
+	}
+
+	//
 	if (p)
 		p->child[cn] = cp;
 	return cp;

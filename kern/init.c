@@ -38,6 +38,7 @@ static char gcc_aligned(16) user_stack[PAGESIZE];
 #define ROOTEXE_START _binary_obj_user_testvm_start
 #endif
 extern char ROOTEXE_START[];
+void read_elf(char *);
 
 // Called first from entry.S on the bootstrap processor,
 // and later from boot/bootother.S on all other processors.
@@ -77,19 +78,14 @@ init(void)
 
 	// Initialize the paged virtual memory system.
 	pmap_init();
-
-	// Find and start other processors in a multiprocessor system
+	// Find and start other procqessors in a multiprocessor system
 	mp_init();		// Find info about processors in system
 	pic_init();		// setup the legacy PIC (mainly to disable it)
 	ioapic_init();		// prepare to handle external device interrupts
 	lapic_init();		// setup this CPU's local APIC
 	cpu_bootothers();	// Get other processors started
-	
 	cprintf("CPU %d (%s) has booted\n", cpu_cur()->id,
 		cpu_onboot() ? "BP" : "AP");
-
-	// Initialize the process management code.
-	proc_init();
 	
 	// Lab 1: change this so it enters user() in user mode,
 	// running on the user_stack declared above,
@@ -111,12 +107,25 @@ init(void)
 	};
 	 	cprintf ("to user\n");
 	trap_return(&tf);*/
+	/*
 	proc *user_proc;
 	if(cpu_onboot()) {
-		
 		user_proc = proc_alloc(NULL,0);
 		user_proc->sv.tf.esp = (uint32_t)&user_stack[PAGESIZE];
 		user_proc->sv.tf.eip =  (uint32_t)user;
+		user_proc->sv.tf.eflags = FL_IF;
+		user_proc->sv.tf.gs = CPU_GDT_UDATA | 3;
+		user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
+		proc_ready(user_proc);
+	}*/
+	proc *user_proc;
+	if(cpu_onboot()) {
+		read_elf(ROOTEXE_START);
+		cprintf("0x40000100 : 0x%x\n",*((uint32_t *)(0x40000100)));
+		cprintf("0xefffffff : 0x%x\n",*((uint32_t *)(0xefffffff)));
+		user_proc = proc_alloc(NULL,0);
+		user_proc->sv.tf.esp = (uint32_t)(VM_USERHI -1);
+		user_proc->sv.tf.eip =  (uint32_t)(0x40000100);
 		user_proc->sv.tf.eflags = FL_IF;
 		user_proc->sv.tf.gs = CPU_GDT_UDATA | 3;
 		user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
@@ -152,7 +161,102 @@ user()
 void gcc_noreturn
 done()
 {
+	cprintf("in done\n");
 	while (1)
 		;	// just spin
 }
 
+void read_elf(char * elf_start) {
+	extern pde_t pmap_bootpdir[1024];
+	elfhdr *elf = (elfhdr *)elf_start;
+	sechdr *sh;
+	pte_t *pte;
+	uint32_t va, va_start, va_end;
+	uint16_t i;
+	uint32_t j;
+	char * load_start;
+	//cprintf("in read_elf , pmap_bootpdir 0x%x\n",pmap_bootpdir);
+	// First allocate and map all the pages a program segment covers, 
+	sh = (sechdr *)(elf_start + elf->e_shoff);
+	//cprintf("number of section : %d\n",elf->e_shnum);
+	
+	for (i = 0; i < elf->e_shnum; i++) {
+		sh ++;
+		if ((sh->sh_type != ELF_SHT_PROGBITS) &&
+			(sh->sh_type != ELF_SHT_NOBITS)) {
+			continue;
+		}
+		if (sh->sh_addr == 0x0) {
+			continue;
+		}
+		//cprintf("name(%d) : 0x%x\n",i,sh->sh_name);
+		va_start  = sh->sh_addr & ~0xFFF;
+		va_end = (sh->sh_addr + sh->sh_size - 1) & ~0xFFF;
+		//cprintf("va_start(0x%x) : 0x%x\nva_end(0x%x) : 0x%x\n>>>sh_off : 0x%x\nsh_size : 0x%x\n\n\n",sh->sh_addr, va_start, sh->sh_addr + sh->sh_size -1,va_end,sh->sh_offset,sh->sh_size);
+
+		// use pmap_insert to alloc page , it may remove some page but it doesn't matter,
+		// because the page doesn't have any content
+		// after pmap_insert , the [sh->sh_addr, sh->sh_addr + sh->sh_size) have the specific phy addr.
+		for (va = va_start; va <= va_end; va += PAGESIZE) {
+			//cprintf("va : 0x%x\n",va);
+			if (pmap_insert(pmap_bootpdir, mem_alloc(), va, PTE_U | PTE_W | PTE_P) == NULL) {
+				panic("in read_elf\n");
+			}
+		}
+	}
+	// then initialize the segment all at once by accessing it at its virtual address. 
+	sh = (sechdr *)(elf_start + elf->e_shoff);
+	for (i = 0 ; i < elf->e_shnum; i++) {
+		sh ++;
+		if ((sh->sh_type != ELF_SHT_PROGBITS) &&
+			(sh->sh_type != ELF_SHT_NOBITS)) {
+			continue;
+		}
+		if (sh->sh_addr == 0x0) {
+			continue;
+		}
+		va_start = sh->sh_addr;
+		load_start = elf_start + sh->sh_offset;
+		for (j =  0; j < sh->sh_size; j++) {
+			if (sh->sh_type == ELF_SHT_PROGBITS) {
+				*((char *)(va_start) + j) =  *((load_start) + j);
+			} else {
+				*((char *)(va_start) + j) =  0;
+			}
+		}
+	}
+	
+	// make some PTE to read-only
+	sh = (sechdr *)(elf_start + elf->e_shoff);
+	for (i = 0 ; i < elf->e_shnum; i++) {
+		sh ++;
+		if ((sh->sh_type != ELF_SHT_PROGBITS) &&
+			(sh->sh_type != ELF_SHT_NOBITS)) {
+			continue;
+		}
+		if (sh->sh_addr == 0x0) {
+			continue;
+		}
+		// SHF_WRITE
+		if (sh->sh_flags & 0x1) {
+			continue;
+		}
+		va_start  = sh->sh_addr & ~0xFFF;
+		va_end = (sh->sh_addr + sh->sh_size - 1) & ~0xFFF;
+		for (va = va_start; va <= va_end; va += PAGESIZE) {
+			//cprintf("va : 0x%x\n",va);
+			pte =  pmap_walk(pmap_bootpdir, va, true);
+			assert(pte != NULL);
+			assert(*pte != PTE_ZERO);
+			*pte = (*pte) & (~PTE_W);
+			assert(!(*pte & PTE_W));
+		}
+	}
+
+	// alloc stack for the testvm
+	if (pmap_insert(pmap_bootpdir, mem_alloc(), VM_USERHI - PAGESIZE, PTE_U | PTE_W | PTE_P) == NULL) {
+				panic("in read_elf\n");
+	}
+	lcr3(mem_phys(pmap_bootpdir));
+	cprintf("read_elf complete\n");
+}

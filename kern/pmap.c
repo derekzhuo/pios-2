@@ -49,19 +49,48 @@ void
 pmap_init(void)
 {
 	if (cpu_onboot()) {
-		// Initialize pmap_bootpdir, the bootstrap page directory.
-		// Page directory entries (PDEs) corresponding to the 
-		// user-mode address space between VM_USERLO and VM_USERHI
-		// should all be initialized to PTE_ZERO (see kern/pmap.h).
-		// All virtual addresses below and above this user area
-		// should be identity-mapped to the same physical addresses,
-		// but only accessible in kernel mode (not in user mode).
-		// The easiest way to do this is to use 4MB page mappings.
-		// Since these page mappings never change on context switches,
-		// we can also mark them global (PTE_G) so the processor
-		// doesn't flush these mappings when we reload the PDBR.
-		panic("pmap_init() not implemented");
-	}
+			// Initialize pmap_bootpdir, the bootstrap page directory.
+	
+			// hong:
+			/*
+			// Use PTE_PS in page directory entry to enable 4Mbyte pages.
+			__attribute__((__aligned__(PGSIZE)))
+			pde_t entrypgdir[NPDENTRIES] = {
+			  // Map VA's [0, 4MB) to PA's [0, 4MB)
+			  [0] = (0) | PTE_P | PTE_W | PTE_PS,
+			  // Map VA's [KERNBASE, KERNBASE+4MB) to PA's [0, 4MB)
+			  [KERNBASE>>PDXSHIFT] = (0) | PTE_P | PTE_W | PTE_PS,
+			};
+			// VM_USERLO : 0x4000 0000 --> 1G
+			// VM_USERHI :	0xf000 0000 --> 4G - 256M  
+			*/
+			uint32_t va = 0;
+			uint32_t i;
+			for (i = 0; i < NPDENTRIES; i++) {
+				va = i << PDXSHIFT;
+				if (va >= VM_USERLO && va < VM_USERHI) {
+							
+				// 1) Page directory entries (PDEs) corresponding to the 
+				// user-mode address space between VM_USERLO and VM_USERHI
+				// should all be initialized to PTE_ZERO (see kern/pmap.h).
+					pmap_bootpdir[i] = PTE_ZERO;
+				} else {
+				// 2) All virtual addresses below and above this user area
+				// should be identity-mapped to the same physical addresses,
+				// but only accessible in kernel mode (not in user mode).
+							
+				// The easiest way to do this is to use 4MB page mappings.
+				// Since these page mappings never change on context switches,
+				// we can also mark them global (PTE_G) so the processor
+				// doesn't flush these mappings when we reload the PDBR.
+					pmap_bootpdir[i] = (i << PDXSHIFT)| PTE_G | PTE_P | PTE_W | PTE_PS;
+				}
+				
+				//cprintf("%d\n",1);
+			}
+			//panic("va = 0x%x\n",va);
+		}
+
 
 	// On x86, segmentation maps a VA to a LA (linear addr) and
 	// paging maps the LA to a PA.  i.e., VA => LA => PA.  If paging is
@@ -154,14 +183,43 @@ pmap_freeptab(pageinfo *ptabpi)
 //
 // Hint 2: the x86 MMU checks permission bits in both the page directory
 // and the page table, so it's safe to leave some page permissions
-// more permissive than strictly necessary.
+// more permissive than strictly necessary.	
+
+// hong : my opinion
+// read shared means the specific page's refcount > 1
 pte_t *
 pmap_walk(pde_t *pdir, uint32_t va, bool writing)
 {
 	assert(va >= VM_USERLO && va < VM_USERHI);
-
 	// Fill in this function
-	return NULL;
+	pde_t pde = pdir[PDX(va)];
+	pte_t *result;
+	if (pde == PTE_ZERO) {
+		if (writing == false) {
+			return NULL;
+		}
+		pageinfo *pi= mem_alloc();
+		pte_t *new_pte = (pte_t *)mem_pi2ptr(pi);
+		pte_t *tmp =  new_pte;
+		if (pi == NULL) {
+			return NULL;
+		}
+		memset(new_pte, 0, PAGESIZE);
+		mem_incref(pi);
+		for (; tmp < new_pte + NPTENTRIES; tmp++) {
+			*tmp = PTE_ZERO;
+		}
+		pdir[PDX(va)] = PGADDR(mem_phys(new_pte)) | PTE_U | PTE_W | PTE_P;
+		result = new_pte + PTX(va);
+	} else {
+		if ((pde & PTE_W) == 0 && writing == true) {
+			panic("in pmap_walk()\n");
+			// TODO: copy the page table  to obtain an exclusive copy of it and write-enable the PDE
+			//pmap_copy(pde_t * spdir,uint32_t sva,pde_t * dpdir,uint32_t dva,size_t size)
+		}
+		result = (pte_t *)mem_ptr(PGADDR(pde)) + PTX(va);
+	}
+	return result;
 }
 
 //
@@ -172,7 +230,7 @@ pmap_walk(pde_t *pdir, uint32_t va, bool writing)
 // Requirements
 //   - If there is already a page mapped at 'va', it should be pmap_remove()d.
 //   - If necessary, allocate a page able on demand and insert into 'pdir'.
-//   - pi->refcount should be incremented if the insertion succeeds.
+//   - pi->refcount should be incremented if the insertion succeeds. 
 //   - The TLB must be invalidated if a page was formerly present at 'va'.
 //
 // Corner-case hint: Make sure to consider what happens when the same 
@@ -189,9 +247,34 @@ pte_t *
 pmap_insert(pde_t *pdir, pageinfo *pi, uint32_t va, int perm)
 {
 	// Fill in this function
-	return NULL;
+	pte_t *pte = pmap_walk(pdir, va, true);
+	assert(pi != NULL);
+	if (pte == NULL){
+		return NULL;
+	} else {
+		bool map_pi = (PGADDR(mem_pi2phys(pi)) == PGADDR(*pte));
+		if (*pte != PTE_ZERO && !map_pi) {
+			pmap_remove(pdir,va,PAGESIZE);
+			cprintf("in pmap_insert, remove\n");
+		}
+		*pte = PGADDR(mem_pi2phys(pi)) | perm | PTE_P;
+		if (!map_pi) {
+			mem_incref(pi);
+		}
+		pte = pmap_walk(pdir, va, true);
+	}
+	return pte;
 }
-
+// hong : add by me
+// return the pte specificed by the va, va must be  page-aligned
+// return NULL if the PDE is PTE_ZERO
+pte_t * pmap_lookup(pde_t *pdir, uint32_t va) {
+	pte_t pde = pdir[PDX(va)];
+	if (pde == PTE_ZERO) {
+		return NULL;
+	}
+	return (pte_t *)mem_ptr(PGADDR(pde)) + PTX(va);
+}
 //
 // Unmap the physical pages starting at user virtual address 'va'
 // and covering a virtual address region of 'size' bytes.
@@ -218,8 +301,43 @@ pmap_remove(pde_t *pdir, uint32_t va, size_t size)
 	assert(PGOFF(size) == 0);	// must be page-aligned
 	assert(va >= VM_USERLO && va < VM_USERHI);
 	assert(size <= VM_USERHI - va);
-
 	// Fill in this function
+	assert(PGOFF(va) == 0);
+	if (size == 0) {
+		return ;
+	}
+	uint32_t cur_va = va;
+	bool meet_first = false;
+	for (; cur_va < va + size ; cur_va += PAGESIZE) {
+		//do some remove work
+		// get the cur_pte first to prevent that  the specific pde be assigned PTE_ZERO(pdir[PDX(cur_va)] = PTE_ZERO;)
+		pte_t *cur_pte = pmap_lookup(pdir, cur_va);
+		if (PTOFF(cur_va) == 0x0) {
+			meet_first = true;
+		}
+		if (PTOFF(cur_va) == 0x3ff000) {
+			if (meet_first == true) {
+				meet_first = false;
+				// remove covers a whole 4MB page table region,
+				pte_t pde = pdir[PDX(cur_va)];
+				if (pde != PTE_ZERO) {
+					mem_decref(mem_phys2pi(PGADDR(pde)),mem_free);
+				}
+				pdir[PDX(cur_va)] = PTE_ZERO;
+			}
+		}
+
+		// no mapping at that address, do nothing
+		if (cur_pte == NULL || *cur_pte == PTE_ZERO) {
+			continue;
+		}
+		mem_decref(mem_phys2pi(PGADDR(*cur_pte)), mem_free);
+		assert(*cur_pte != PTE_ZERO);
+		*cur_pte = PTE_ZERO;
+		assert(*cur_pte == PTE_ZERO);
+		pmap_inval(pdir, cur_va, PAGESIZE);
+	}
+	// TODO: how to inval the whole pdir
 }
 
 //
@@ -235,7 +353,7 @@ pmap_inval(pde_t *pdir, uint32_t va, size_t size)
 	if (p == NULL || p->pdir == pdir) {
 		if (size == PAGESIZE)
 			invlpg(mem_ptr(va));	// invalidate one page
-		else
+		else 
 			lcr3(mem_phys(pdir));	// invalidate everything
 	}
 }
@@ -365,7 +483,6 @@ pmap_check(void)
 	pi1 = mem_alloc();
 	pi2 = mem_alloc();
 	pi3 = mem_alloc();
-
 	assert(pi0);
 	assert(pi1 && pi1 != pi0);
 	assert(pi2 && pi2 != pi1 && pi2 != pi0);
@@ -488,6 +605,15 @@ pmap_check(void)
 	assert(pmap_insert(pmap_bootpdir, pi0, va+PAGESIZE, 0));
 	assert(pmap_insert(pmap_bootpdir, pi0, va+PTSIZE-PAGESIZE, 0));
 	assert(PGADDR(pmap_bootpdir[PDX(VM_USERLO)]) == mem_pi2phys(pi1));
+	// hong : add by me
+	assert(PGADDR(pmap_bootpdir[PDX(VM_USERLO + PAGESIZE)]) == mem_pi2phys(pi1));
+	assert(PGADDR(pmap_bootpdir[PDX(VM_USERLO + PTSIZE-PAGESIZE)]) == mem_pi2phys(pi1));
+	assert(pi1->refcount == 1);
+	assert(pi0->refcount == 3);
+	assert(va2pa(pmap_bootpdir,va) == mem_pi2phys(pi0));
+	assert(va2pa(pmap_bootpdir,va + PAGESIZE) == mem_pi2phys(pi0));
+	assert(va2pa(pmap_bootpdir,va+PTSIZE-PAGESIZE) == mem_pi2phys(pi0));
+	//
 	assert(mem_freelist == NULL);
 	mem_free(pi2);
 	assert(pmap_insert(pmap_bootpdir, pi0, va+PTSIZE, 0));
@@ -496,6 +622,13 @@ pmap_check(void)
 	assert(PGADDR(pmap_bootpdir[PDX(VM_USERLO+PTSIZE)])
 		== mem_pi2phys(pi2));
 	assert(mem_freelist == NULL);
+	// hong: add by me
+	assert(pi2->refcount == 1);
+	assert(pi0->refcount == 6);
+	assert(va2pa(pmap_bootpdir,va+PTSIZE) == mem_pi2phys(pi0));
+	assert(va2pa(pmap_bootpdir,va+PTSIZE+PAGESIZE) == mem_pi2phys(pi0));
+	assert(va2pa(pmap_bootpdir,va+PTSIZE*2-PAGESIZE) == mem_pi2phys(pi0));
+	//
 	mem_free(pi3);
 	assert(pmap_insert(pmap_bootpdir, pi0, va+PTSIZE*2, 0));
 	assert(pmap_insert(pmap_bootpdir, pi0, va+PTSIZE*2+PAGESIZE, 0));
@@ -509,6 +642,7 @@ pmap_check(void)
 	assert(pi2->refcount == 1);
 	assert(pi3->refcount == 1);
 	pmap_remove(pmap_bootpdir, va+PAGESIZE, PTSIZE*3-PAGESIZE*2);
+	cprintf("pi0->refcount = %d\n",pi0->refcount);
 	assert(pi0->refcount == 2);
 	assert(pi2->refcount == 0); assert(mem_alloc() == pi2);
 	assert(mem_freelist == NULL);

@@ -62,7 +62,6 @@ typedef struct proc {
 
 	// hong: add by me for debug
 	char id[100];
->>>>>>> lab2
 } proc;
 
 #define proc_cur()	(cpu_cur()->proc)

@@ -70,6 +70,7 @@ typedef struct sechdr {
 #define ELF_SHT_PROGBITS	1
 #define ELF_SHT_SYMTAB		2
 #define ELF_SHT_STRTAB		3
+#define ELF_SHT_NOBITS		8
 
 // Values for sechdr::sh_name
 #define ELF_SHN_UNDEF		0
