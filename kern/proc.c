@@ -34,7 +34,16 @@ struct {
 	spinlock lock;
 	proc * ready_head;
 }proc_ready_que;
-
+void ready_queue_count() {
+	return ;
+	int count = 0;
+	proc *tmp =proc_ready_que.ready_head;
+	while(tmp != NULL) {
+		count ++;
+		tmp = tmp->readynext;
+	}
+	cprintf("<><><>ready count(%d)\n",count);
+}
 void 
 proc_log(spinlock lock, log_type type) {
 	return ;
@@ -48,15 +57,15 @@ proc_log(spinlock lock, log_type type) {
 void
 proc_init(void)
 {
-	static int inited = 0;
-	if(inited == 1)
-		return ;
- 	//if (!cpu_onboot()) {
+	//static int inited = 0;
+	//if(inited == 1)
 	//	return ;
-	//}
+ 	if (!cpu_onboot()) {
+		return ;
+	}
 	// your module initialization code here
 	// hong: add by me
-	inited = 1;
+	//inited = 1;
 	spinlock_init_(&proc_ready_que.lock, "proc_ready_que",1);
 	cprintf("lock name : %s",proc_ready_que.lock.file);
 	proc_ready_que.ready_head = NULL;
@@ -99,7 +108,7 @@ proc_alloc(proc *p, uint32_t cn)
 	cp->sv.tf.es = CPU_GDT_UDATA | 3;
 	cp->sv.tf.cs = CPU_GDT_UCODE | 3;
 	cp->sv.tf.ss = CPU_GDT_UDATA | 3;
-	cp->sv.tf.eflags = FL_IF;
+	//cp->sv.tf.eflags = FL_IF;
 
 	// hong 
 	// lab3 Exercise 3. Add code to proc_alloc() to allocate and initialize a process's
@@ -125,20 +134,16 @@ proc_ready(proc *p)
 	//cprintf("cpu[%d] in proc_ready\n",cpu_cur()->id);
 	// hong:
 	// add by me
-	assert(p->state != PROC_READY);
-    proc_log(p->lock, LOCK_ACQUIRE);
+	//cprintf("cpu[%d] in proc_ready, %x in, before",cpu_cur()->id, p);ready_queue_count();
+	assert(p->state != PROC_READY && p->state != PROC_WAIT);
 	spinlock_acquire(&(p->lock));
-    proc_log(p->lock, LOCK_GET);
 	
 	p->state = PROC_READY;
 	p->readynext = NULL;
 	
-    proc_log(p->lock, LOCK_RELEASE);
 	spinlock_release(&(p->lock));
 	
-    proc_log( proc_ready_que.lock, LOCK_ACQUIRE);
 	spinlock_acquire(&proc_ready_que.lock);
-    proc_log( proc_ready_que.lock, LOCK_GET);
 	
 	if (proc_ready_que.ready_head == NULL) {
 		proc_ready_que.ready_head = p;
@@ -149,9 +154,8 @@ proc_ready(proc *p)
 		}
 		cur->readynext =  p;
 	}
-	
-    proc_log(proc_ready_que.lock, LOCK_RELEASE);
 	spinlock_release(&proc_ready_que.lock);
+	//cprintf("after "); ready_queue_count();
 }
 
 // hong:>>>>
@@ -168,13 +172,13 @@ proc_save(proc *p, trapframe *tf, int entry)
 	//cprintf("cpu[%d] in proc_save\n",cpu_cur()->id);
 	// hong: 
 	// note : save rather than assign(=)
-    proc_log(p->lock, LOCK_ACQUIRE);
-	spinlock_acquire(&(p->lock));
-    proc_log(p->lock, LOCK_GET);
+    //proc_log(p->lock, LOCK_ACQUIRE);
+	//spinlock_acquire(&(p->lock));
+    //proc_log(p->lock, LOCK_GET);
 	
 	switch (entry) {
 	case -1 : 
-		cprintf("proc_save() entry(-1)\n"); 
+		//cprintf("proc_save() entry(-1)\n"); 
 		memmove(&(p->sv.tf), tf, sizeof(trapframe)); break;
 	case 0 : 
 		tf->eip = (uintptr_t)((char *)tf->eip - 2 );
@@ -184,8 +188,8 @@ proc_save(proc *p, trapframe *tf, int entry)
 	
 	}
 	
-    proc_log(p->lock, LOCK_RELEASE);
-	spinlock_release(&(p->lock));
+    //proc_log(p->lock, LOCK_RELEASE);
+	//spinlock_release(&(p->lock));
 }
 
 // Go to sleep waiting for a given child process to finish running.
@@ -199,21 +203,18 @@ proc_wait(proc *p, proc *cp, trapframe *tf)
 	// hong: add by me
 	assert(p->state == PROC_RUN);
 	
-    proc_log(p->lock, LOCK_ACQUIRE);
-	spinlock_acquire(&(p->lock));
-    proc_log(p->lock, LOCK_GET);
+    //proc_log(p->lock, LOCK_ACQUIRE);
+	//spinlock_acquire(&(p->lock));
+    //proc_log(p->lock, LOCK_GET);
 	
 	p->state = PROC_WAIT;
 	p->waitchild = cp;
 	
-    proc_log(p->lock, LOCK_RELEASE);
-	spinlock_release(&(p->lock));
+    //proc_log(p->lock, LOCK_RELEASE);
+	//spinlock_release(&(p->lock));
 	// system call blocked ,must rollback
-	
 	proc_save(p, tf, 0);
-	// hong : 
-	// can't use proc_yield() , which is used to yied cpu, and set the current process to PROC_READY state
-	assert(cp->state != PROC_STOP);
+	spinlock_release(&cp->lock);
 	proc_sched();
 
 }
@@ -228,6 +229,7 @@ proc_sched(void)
 {
 	// hong: add by me
 	proc * cur;
+	cpu_cur()->proc = NULL;
 	for (;;){
 	//cprintf("cpu[%d] in proc_sched\n",cpu_cur()->id);
    		 proc_log(proc_ready_que.lock, LOCK_ACQUIRE);
@@ -235,8 +237,10 @@ proc_sched(void)
     	proc_log(proc_ready_que.lock, LOCK_GET);
 		if (proc_ready_que.ready_head != NULL) {
 			cur = proc_ready_que.ready_head;
+			//cprintf("cpu[%d] in proc_sched, %x out, before ",cpu_cur()->id,  cur);ready_queue_count();
 			proc_ready_que.ready_head =  proc_ready_que.ready_head->readynext;
 			assert(cur->state == PROC_READY);
+			//cprintf("after ");ready_queue_count();
 			proc_run(cur);
 		} else {
 			pause();
@@ -263,7 +267,8 @@ proc_run(proc *p)
     proc_log(proc_ready_que.lock, LOCK_RELEASE);
 	spinlock_release(&proc_ready_que.lock);
 	//cprintf("proc_run : eip = 0x%x , cs = 0x%x\n",p->sv.tf.eip,p->sv.tf.esp);
-	//cprintf("cpu[%d] run proc%s\n",cpu_cur()->id,p->id);
+	//cprintf("cpu[%d] run proc[0x%x] : eip(0x%x)\n",cpu_cur()->id,p,p->sv.tf.eip);
+	lcr3(mem_phys(p->pdir));
 	trap_return(&p->sv.tf);
 }
 
@@ -282,6 +287,8 @@ proc_yield(trapframe *tf)
 {
 	//cprintf("cpu[%d] in proc_ready\n",cpu_cur()->id);
 	proc *p = cpu_cur()->proc;
+	// no other cpu or process will associate with the current process(state = PROC_RUN)at this moment
+	// so we don't need a lock while call proc_save
 	proc_save(p, tf, 1);
 	proc_ready(p);
 	proc_sched();
@@ -295,22 +302,30 @@ proc_yield(trapframe *tf)
 void gcc_noreturn
 proc_ret(trapframe *tf, int entry)
 {
+	// PROC_RUN -> PROC_STOP
+	
 	proc *child = cpu_cur()->proc;
 	proc *parent = child->parent;
-	assert(child->state != PROC_STOP);
-	
-    proc_log(child->lock, LOCK_ACQUIRE);
+	assert(child->state == PROC_RUN);
 	spinlock_acquire(&(child->lock));
-    proc_log(child->lock, LOCK_GET);
-	
+
+	// save the tf and update the state while ge the lock to prevent that 
+	// parent get the child's ps but it doesnt call proc_save...
 	child->state = PROC_STOP;
-	
-    proc_log(child->lock, LOCK_RELEASE);
-	spinlock_release(&(child->lock));
-	
 	proc_save(child, tf, entry);
+
+	spinlock_release(&(child->lock));
+
+	if (parent == NULL) {
+		cprintf("current process(0x%x)\n",child);
+		assert(parent != NULL);
+	}
+	
 	if ((parent->state == PROC_WAIT) && (parent->waitchild == child)) {
-		proc_ready(parent);
+		spinlock_acquire(&proc_ready_que.lock);
+		// only parent's waitchild process can modify it's state so we don't need a lock
+		parent->state = PROC_READY;
+		proc_run(parent);
 	}
 	proc_sched();
 
@@ -380,6 +395,9 @@ proc_check(void)
 		// get child 0's state
 	assert(recovargs == NULL);
 	do {
+		// hong :
+		// let the all 4 child's state be child_state(child[0])
+		// and every child get a trap in turn and just call sys_ret in trap() to reflect to parent
 		sys_put(SYS_REGS | SYS_START, i, &child_state, NULL, NULL, 0);
 		sys_get(SYS_REGS, i, &child_state, NULL, NULL, 0);
 		if (recovargs) {	// trap recovery needed
@@ -389,6 +407,8 @@ proc_check(void)
 			child_state.tf.eip = (uint32_t) args->reip;
 			args->trapno = child_state.tf.trapno;
 		} else
+			// hong : 
+			// the system call is the last sys_ret in child() 
 			assert(child_state.tf.trapno == T_SYSCALL);
 		i = (i+1) % 4;	// rotate to next child proc
 	} while (child_state.tf.trapno != T_SYSCALL);

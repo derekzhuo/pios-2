@@ -38,7 +38,7 @@ static char gcc_aligned(16) user_stack[PAGESIZE];
 #define ROOTEXE_START _binary_obj_user_testvm_start
 #endif
 extern char ROOTEXE_START[];
-void read_elf(char *);
+void read_elf(char *, pde_t *);
 
 // Called first from entry.S on the bootstrap processor,
 // and later from boot/bootother.S on all other processors.
@@ -83,6 +83,7 @@ init(void)
 	pic_init();		// setup the legacy PIC (mainly to disable it)
 	ioapic_init();		// prepare to handle external device interrupts
 	lapic_init();		// setup this CPU's local APIC
+	proc_init();
 	cpu_bootothers();	// Get other processors started
 	cprintf("CPU %d (%s) has booted\n", cpu_cur()->id,
 		cpu_onboot() ? "BP" : "AP");
@@ -118,15 +119,16 @@ init(void)
 		user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
 		proc_ready(user_proc);
 	}*/
+	
 	proc *user_proc;
 	if(cpu_onboot()) {
-		read_elf(ROOTEXE_START);
-		cprintf("0x40000100 : 0x%x\n",*((uint32_t *)(0x40000100)));
-		cprintf("0xefffffff : 0x%x\n",*((uint32_t *)(0xefffffff)));
 		user_proc = proc_alloc(NULL,0);
+		read_elf(ROOTEXE_START, user_proc->pdir);
 		user_proc->sv.tf.esp = (uint32_t)(VM_USERHI -1);
+		memset(mem_ptr(VM_USERHI - PAGESIZE), 0, PAGESIZE);
 		user_proc->sv.tf.eip =  (uint32_t)(0x40000100);
 		user_proc->sv.tf.eflags = FL_IF;
+		//user_proc->sv.tf.eflags = FL_IOPL_3;
 		user_proc->sv.tf.gs = CPU_GDT_UDATA | 3;
 		user_proc->sv.tf.fs = CPU_GDT_UDATA | 3;
 		proc_ready(user_proc);
@@ -166,8 +168,7 @@ done()
 		;	// just spin
 }
 
-void read_elf(char * elf_start) {
-	extern pde_t pmap_bootpdir[1024];
+void read_elf(char * elf_start, pde_t * pdir) {
 	elfhdr *elf = (elfhdr *)elf_start;
 	sechdr *sh;
 	pte_t *pte;
@@ -175,6 +176,7 @@ void read_elf(char * elf_start) {
 	uint16_t i;
 	uint32_t j;
 	char * load_start;
+	lcr3(mem_phys(pdir));
 	//cprintf("in read_elf , pmap_bootpdir 0x%x\n",pmap_bootpdir);
 	// First allocate and map all the pages a program segment covers, 
 	sh = (sechdr *)(elf_start + elf->e_shoff);
@@ -199,7 +201,7 @@ void read_elf(char * elf_start) {
 		// after pmap_insert , the [sh->sh_addr, sh->sh_addr + sh->sh_size) have the specific phy addr.
 		for (va = va_start; va <= va_end; va += PAGESIZE) {
 			//cprintf("va : 0x%x\n",va);
-			if (pmap_insert(pmap_bootpdir, mem_alloc(), va, PTE_U | PTE_W | PTE_P) == NULL) {
+			if (pmap_insert(pdir, mem_alloc(), va, PTE_U | PTE_W | PTE_P) == NULL) {
 				panic("in read_elf\n");
 			}
 		}
@@ -245,7 +247,7 @@ void read_elf(char * elf_start) {
 		va_end = (sh->sh_addr + sh->sh_size - 1) & ~0xFFF;
 		for (va = va_start; va <= va_end; va += PAGESIZE) {
 			//cprintf("va : 0x%x\n",va);
-			pte =  pmap_walk(pmap_bootpdir, va, true);
+			pte =  pmap_walk(pdir, va, true);
 			assert(pte != NULL);
 			assert(*pte != PTE_ZERO);
 			*pte = (*pte) & (~PTE_W);
@@ -254,9 +256,31 @@ void read_elf(char * elf_start) {
 	}
 
 	// alloc stack for the testvm
-	if (pmap_insert(pmap_bootpdir, mem_alloc(), VM_USERHI - PAGESIZE, PTE_U | PTE_W | PTE_P) == NULL) {
+	if (pmap_insert(pdir, mem_alloc(), VM_USERHI - PAGESIZE, PTE_U | PTE_W | PTE_P) == NULL) {
 				panic("in read_elf\n");
 	}
-	lcr3(mem_phys(pmap_bootpdir));
+
+	// check the permission for each section
+	/*uint32_t check_va = 0x40000100;
+	for(i = 0; i < 0x3a75; i++)
+		assert ( !(*pmap_walk(pdir ,check_va + i,false) & PTE_W) );
+	check_va = 0x40003b80;
+	for(i = 0; i < 0x000abc; i++)
+		assert ( !(*pmap_walk(pdir ,check_va + i,false) & PTE_W) );
+	check_va = 0x4000463c;
+	for(i = 0; i < 0x000058; i++)
+		assert ( !(*pmap_walk(pdir ,check_va + i,false) & PTE_W) );
+	check_va = 0x400056a0;
+	for(i = 0; i < 0x000600; i++)
+		assert ( (*pmap_walk(pdir ,check_va + i,false) & PTE_W) );
+	check_va = 0x40005ca0;
+	for(i = 0; i < 0x002128; i++)
+		assert ( (*pmap_walk(pdir ,check_va + i,false) & PTE_W) );*/
+	
+	lcr3(mem_phys(pdir));
+	//uint32_t * kkk = (uint32_t *)0x40003b80;
+	//*kkk = 3333;
+	//cprintf("kkk 0x%x\n",*kkk);
 	cprintf("read_elf complete\n");
 }
+//add-symbol-file obj/user/testvm 0x40000100

@@ -33,7 +33,11 @@
 static void gcc_noreturn
 systrap(trapframe *utf, int trapno, int err)
 {
-	panic("systrap() not implemented.");
+	assert(utf->trapno == T_SYSCALL);
+	utf->trapno = trapno;
+	utf->err = err;
+	// TODO: how to set the entry , mybe 0 0r 1 all work,  depende the parent process
+	proc_ret(utf, 1);
 }
 
 // Recover from a trap that occurs during a copyin or copyout,
@@ -49,7 +53,9 @@ systrap(trapframe *utf, int trapno, int err)
 static void gcc_noreturn
 sysrecover(trapframe *ktf, void *recoverdata)
 {
-	panic("sysrecover() not implemented.");
+	cpu_cur()->recoverdata = NULL;
+	//(trapframe *)recoverdata->eip = ktf->eip;
+	systrap((trapframe *)recoverdata, ktf->trapno, ktf->err);
 }
 
 // Check a user virtual address block for validity:
@@ -63,7 +69,12 @@ sysrecover(trapframe *ktf, void *recoverdata)
 //
 static void checkva(trapframe *utf, uint32_t uva, size_t size)
 {
-	panic("checkva() not implemented.");
+	// TODO: implement "if" statement and err arg in systrap()
+	if ((size < 0) ||
+		(uva < VM_USERLO) || (uva >= VM_USERHI) ||
+		((VM_USERHI - uva)< size)) {
+		systrap(utf, T_GPFLT, 0);
+	}
 }
 
 // Copy data to/from user space,
@@ -75,7 +86,14 @@ void usercopy(trapframe *utf, bool copyout,
 	checkva(utf, uva, size);
 
 	// Now do the copy, but recover from page faults.
-	panic("syscall_usercopy() not implemented.");
+	cpu_cur()->recover = sysrecover;
+	cpu_cur()->recoverdata = (void *)utf;
+	if (copyout) {
+		memmove((void *)uva, kva, size);
+	} else {
+		memmove(kva, (void *)uva, size);
+	}
+	cpu_cur()->recover = NULL;
 }
 
 static void
@@ -112,30 +130,52 @@ do_put(trapframe* tf){
 	uint32_t cn = (uint32_t)tf->regs.edx;
 	proc *parent = cpu_cur()->proc;
 	proc *child =  parent->child[cn];
+	
+	assert(parent != NULL);
+	// at each moment the specific parent process could only be excute by only on cpu 
+	// so the specific child process's proc_alloc didn't need a lock
+	//cprintf("in do_put : parent(0x%x)\n",parent);
 	if (child == NULL) {
 		child = proc_alloc(parent, cn);
+		//cprintf("in do_put : new child(0x%x)\n",child);
 	}
+	// get the child's lock the ensure that when step into the proc_wait, the child's state didn't be modified
+	spinlock_acquire(&child->lock);
 	if (child->state != PROC_STOP) {
-		spinlock_acquire(&(parent->lock));
-		parent->state = PROC_WAIT;
-		spinlock_release(&(parent->lock));
-		// system call blocked ,must rollback
-		proc_save(parent, tf, 0);
+		proc_wait(parent, child, tf);
 	}
-	
+	spinlock_release(&child->lock);
 	if (tf->regs.eax & SYS_REGS) {
 		spinlock_acquire(&(child->lock));
 		// hong is it right ??????
 		memmove(&(child->sv.tf.regs), &(cpustate->tf.regs), sizeof(pushregs));
-		child->sv.tf.eip =  cpustate->tf.eip;
-		child->sv.tf.esp =  cpustate->tf.esp;
+		child->sv.tf.ds = CPU_GDT_UDATA | 3;
+		child->sv.tf.es = CPU_GDT_UDATA | 3;
+		child->sv.tf.cs = CPU_GDT_UCODE | 3;
+		child->sv.tf.ss = CPU_GDT_UDATA | 3;
+		child->sv.tf.eip = cpustate->tf.eip;
+		child->sv.tf.esp = cpustate->tf.esp;
+		child->sv.tf.eflags &= FL_USER;
+		child->sv.tf.fs = cpustate->tf.fs;
+		child->sv.tf.gs = cpustate->tf.gs;
 		// TODO: how to put eflags
 
 		spinlock_release(&(child->lock));
 	}
+	if (tf->regs.eax & SYS_COPY) {
+		uint32_t size = tf->regs.ecx;
+		uint32_t sva = tf->regs.esi;
+		uint32_t dva = tf->regs.edi;
+		pmap_copy(parent->pdir, sva, child->pdir, dva, size);
+	}
+	if (tf->regs.eax & SYS_ZERO) {
+		panic("unimplement\n");
+	}
 	if (tf->regs.eax & SYS_START) {
+		assert(child->state == PROC_STOP);
 		proc_ready(child);
 	}
+
 	trap_return(tf);
 }
 
@@ -152,16 +192,28 @@ do_get(trapframe* tf) {
 	uint32_t  cn = (uint32_t)tf->regs.edx;
 	proc *parent = cpu_cur()->proc;
 	proc *child = parent->child[cn];
+	assert(parent != NULL);
 	assert(child != NULL);
+	spinlock_acquire(&child->lock);
 	if (child->state != PROC_STOP) {
 		proc_wait(parent, child, tf);
 	}
+	spinlock_release(&child->lock);
 	if (tf->regs.eax & SYS_REGS) {
 		// TODO: is it right ???????
 		memmove(&(cpustate->tf), &(child->sv.tf),sizeof(trapframe));
-	} else {
-		assert(tf->regs.eax == SYS_GET);
-		cprintf("unkonw flags , tf->regs.eax : 0x%x\n",tf->regs.eax);
+	}
+	if (tf->regs.eax & SYS_COPY) {
+		uint32_t size = tf->regs.ecx;
+		uint32_t sva = tf->regs.esi;
+		uint32_t dva = tf->regs.edi;
+		pmap_copy(child->pdir , sva, parent->pdir, dva, size);
+	}
+	if (tf->regs.eax & SYS_ZERO) {
+		panic("unimplement\n");
+	}
+	if (tf->regs.eax & SYS_MERGE) {
+		panic("unimplement\n");
 	}
 	trap_return(tf);
 }
@@ -180,6 +232,7 @@ do_ret(trapframe *tf) {
 // Common function to handle all system calls -
 // decode the system call type and call an appropriate handler function.
 // Be sure to handle undefined system calls appropriately.
+// TODO:  modify the system call handlers to use usercopy when copying system call argument data into or out of user space. 
 void
 syscall(trapframe *tf)
 {

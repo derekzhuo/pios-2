@@ -153,9 +153,13 @@ trap(trapframe *tf)
 	cpu *c = cpu_cur();
 	if (c->recover)
 		c->recover(tf, c->recoverdata);
-
+	
+	if (tf->trapno == T_PGFLT) {
+		pmap_pagefault(tf);
+	}
+	
 	// Lab 2: your trap handling code here!
-	if (tf->trapno==T_SYSCALL){
+	if (tf->trapno == T_SYSCALL){
 		syscall(tf);
 		panic("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!system call return to trap!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
 	}
@@ -175,7 +179,7 @@ trap(trapframe *tf)
 		case T_LERROR: panic("T_LERROR occur\n"); break;
 		
 		default:
-			cprintf("unhandle trapno(%d) in switch(tf->trapno)\n",tf->trapno);
+			//cprintf("in trap() : trapno(%d)\n",tf->trapno);
 			proc_ret(tf, -1);
 	}
 

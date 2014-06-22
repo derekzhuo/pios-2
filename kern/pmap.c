@@ -212,6 +212,7 @@ pmap_walk(pde_t *pdir, uint32_t va, bool writing)
 		pdir[PDX(va)] = PGADDR(mem_phys(new_pte)) | PTE_U | PTE_W | PTE_P;
 		result = new_pte + PTX(va);
 	} else {
+		// read share
 		if ((pde & PTE_W) == 0 && writing == true) {
 			panic("in pmap_walk()\n");
 			// TODO: copy the page table  to obtain an exclusive copy of it and write-enable the PDE
@@ -262,6 +263,9 @@ pmap_insert(pde_t *pdir, pageinfo *pi, uint32_t va, int perm)
 			mem_incref(pi);
 		}
 		pte = pmap_walk(pdir, va, true);
+		if (va == VM_USERHI - PAGESIZE) {
+			cprintf("in pmap_insert : pde(%x) pte(%x) va(0x%x)\n",*(pdir + PDX(va)),*pte,va);
+		}
 	}
 	return pte;
 }
@@ -358,6 +362,37 @@ pmap_inval(pde_t *pdir, uint32_t va, size_t size)
 	}
 }
 
+// hong:
+// new a pde  for the arg "pde", the permission in pde is clear
+void pmap_newpde(pde_t *pde) {
+	pageinfo * pi = mem_alloc();
+	pte_t * tmp;
+	int i;
+	if (pi == NULL) {
+		panic("in pmap_newpde : mem_alloc failed\n");
+	}
+	mem_incref(pi);
+	tmp = (pte_t *)mem_pi2ptr(pi);
+	for (i = 0; i < NPTENTRIES; i++) {
+		*(tmp + i) = PTE_ZERO;
+	}
+	*pde = mem_pi2phys(pi);
+}
+void print_nozero_pte(pde_t * pdir, uint32_t va, uint32_t size) {
+	uint32_t tmp = va ;
+	uint32_t *pte;
+	for (;tmp < va + size; tmp += PAGESIZE) {
+		pte = pmap_walk(pdir,tmp,false);
+		if (pte != NULL && *pte != PTE_ZERO) {
+			cprintf("va(0x%x) pte(0x%x)\n",tmp, *pte);
+		}
+	}
+}
+void gene_pagefault() {
+	uint32_t * add = (uint32_t *)0xeffff000;
+	*add = 33;
+	cprintf("gene _pagefault 0x%x\n",*add);
+}
 //
 // Virtually copy a range of pages from spdir to dpdir (could be the same).
 // Uses copy-on-write to avoid the cost of immediate copying:
@@ -368,6 +403,8 @@ int
 pmap_copy(pde_t *spdir, uint32_t sva, pde_t *dpdir, uint32_t dva,
 		size_t size)
 {
+	//cprintf(">>>> before pmap_copy\n");
+	//print_nozero_pte(spdir, sva, size);
 	assert(PTOFF(sva) == 0);	// must be 4MB-aligned
 	assert(PTOFF(dva) == 0);
 	assert(PTOFF(size) == 0);
@@ -375,10 +412,74 @@ pmap_copy(pde_t *spdir, uint32_t sva, pde_t *dpdir, uint32_t dva,
 	assert(dva >= VM_USERLO && dva < VM_USERHI);
 	assert(size <= VM_USERHI - sva);
 	assert(size <= VM_USERHI - dva);
+	uint32_t src, dst, perm;
+	pde_t *spde, *dpde;
+	pte_t *spte;
+	pageinfo * spi, dpi;
+	int i;
+	for (src = sva, dst = dva; src < sva + size; src += PTSIZE, dst += PTSIZE) {
+		spde = spdir + PDX(src);
+		dpde = dpdir + PDX(dst);
 
-	panic("pmap_copy() not implemented");
+		// unmap the old dpde
+		if (*dpde != PTE_ZERO) {
+			pmap_remove(dpdir, dst, PTSIZE);
+		}
+		// alloc a new pde for dpde
+		assert(*dpde == PTE_ZERO);
+		pmap_newpde(dpde);
+		assert(*dpde != PTE_ZERO);
+		
+		if (*spde == PTE_ZERO) {
+			continue;
+		}
+		//cprintf("<<spde : %x>> sva : %x\n",*spde,src);
+		spte = (pte_t *)mem_ptr(PGADDR(*spde));
+		//didn need incref the pi for spde ,because the dpde use it's own pde
+		//mem_incref(mem_phys2pi(PGADDR(*spde)));
+
+		// modify the source page table 
+		for (i = 0; i < NPTENTRIES; i++, spte++) {
+			if (*spte == PTE_ZERO) {
+				continue;
+			}
+			// modify the perm
+			perm = PGOFF(*spte);
+			if (perm & PTE_W) {
+				//cprintf("PTE_W(0x%x)\n",src + i*PAGESIZE);
+				perm = (perm & (~PTE_W)) | SYS_WRITE;
+			}
+			*spte = PGADDR(*spte) | perm;
+			mem_incref(mem_phys2pi(PGADDR(*spte)));
+			//cprintf("mem_incref(0x%x), refcount(0x%x)\n",(PGADDR(*spte)),mem_phys2pi(PGADDR(*spte))->refcount);
+		}
+		// copy the source page table 
+		memmove(mem_ptr(PGADDR(*dpde)), mem_ptr(PGADDR(*spde)),PAGESIZE);
+		*dpde = PGADDR(*dpde) | PGOFF(*spde);
+		
+	}	
+
+	pmap_inval(spdir ,sva, size);
+	pmap_inval(dpdir ,dva, size);
+	//cprintf(">>>> after pmap_copy\n");
+	//gene_pagefault();
+	//print_nozero_pte(dpdir, sva, size);
+
+
+	return 1;
 }
-
+// hong:
+// didn't set permission 
+void copy_on_write(pte_t * pte) {
+	pageinfo *pi =mem_alloc();
+	if(pi == NULL) {
+		panic("panic copy_on_write, alloc faild\n");
+	}
+	mem_incref(pi);
+	memmove(mem_pi2ptr(pi), mem_ptr(PGADDR(*pte)), PAGESIZE);
+	mem_decref(mem_phys2pi(PGADDR(*pte)), mem_free);
+	*pte = mem_pi2phys(pi);
+}
 //
 // Transparently handle a page fault entirely in the kernel, if possible.
 // If the page fault was caused by a write to a copy-on-write page,
@@ -386,14 +487,65 @@ pmap_copy(pde_t *spdir, uint32_t sva, pde_t *dpdir, uint32_t dva,
 // If the fault wasn't due to the kernel's copy on write optimization,
 // however, this function just returns so the trap gets blamed on the user.
 //
+
+// #PG err code
+// bit 0 : P
+// bit 1 : R/W
+// bit 2 : U/S
+// bit 3 : RSVD
+// bit 4~31 : Reserved
+#define PG_ERR_BIT_P	0x1
+#define PG_ERR_BIT_RW	0x2
+#define PG_ERR_BIT_US	0x4
+
 void
 pmap_pagefault(trapframe *tf)
 {
 	// Read processor's CR2 register to find the faulting linear address.
 	uint32_t fva = rcr2();
 	//cprintf("pmap_pagefault fva %x eip %x\n", fva, tf->eip);
-
+	
 	// Fill in the rest of this code.
+	assert(tf->trapno == T_PGFLT);
+	pde_t *pdir = cpu_cur()->proc->pdir;
+	pte_t *pte;
+	pageinfo *pi;
+	uint32_t err = tf->err;
+	uint32_t perm;
+	if ((fva < VM_USERLO)  || (fva >= VM_USERHI)) {
+		//assert(!(err & PG_ERR_BIT_US));
+		//cprintf("in pmap_pagefault : (fva < VM_USERLO) && (fva >= VM_USERHI) occur\n");
+		proc_ret(tf, 1 );
+	}
+	pte = pmap_walk(pdir, fva, false);
+	pi = (pageinfo *)mem_phys2pi(PGADDR(*pte));
+	perm = PGOFF(*pte);
+	if (pte == NULL) {
+		// the specific pde == PTE_ZERO, cause access privilige fault 
+		assert(err & PG_ERR_BIT_P);
+		cprintf("in pmap_pagefault : pte == NULL occur\n");
+		proc_ret(tf, 1);
+	}
+	if (*pte == PTE_ZERO) {
+		assert(!(err & PG_ERR_BIT_P));
+		cprintf("in pmap_pagefault : *pte == PTE_ZERO occur\n");
+		proc_ret(tf, 1);
+	}
+	// whether the page fault was caused by a wrsite to a copy-on-write page or not
+	if ((err & PG_ERR_BIT_RW) && !(perm & PTE_W) && (perm & SYS_WRITE)) {
+		assert(*pte != PTE_ZERO);
+		pmap_inval(pdir, fva,PAGESIZE);
+		// if the phy page's reccount > 1 then we need copy on write
+		if (pi->refcount > 1) {
+			copy_on_write(pte);
+		}
+		// update the perm, and assigned to the "new" pte
+		perm = (perm & (~SYS_RW)) | PTE_W | PTE_P;
+		*pte = PGADDR(*pte) | perm;
+		trap_return(tf);
+	}
+	cprintf("in pmap_pagefault : unknow err code\n");
+	proc_ret(tf, 1);
 }
 
 //
