@@ -33,6 +33,18 @@
 static void gcc_noreturn
 systrap(trapframe *utf, int trapno, int err)
 {
+	proc *parent = proc_cur();
+	int i;
+	for (i = 0; i < PROC_CHILDREN; i++) {
+		if (!parent->child[i] || !spinlock_holding(&(parent->child[i]->lock))) {
+			continue;
+		}
+		spinlock_release(&(parent->child[i]->lock));
+	}
+	if (spinlock_holding(&(parent->lock))) {
+		spinlock_release(&(parent->lock));
+	}
+	
 	assert(utf->trapno == T_SYSCALL);
 	utf->trapno = trapno;
 	utf->err = err;
@@ -53,15 +65,14 @@ systrap(trapframe *utf, int trapno, int err)
 static void gcc_noreturn
 sysrecover(trapframe *ktf, void *recoverdata)
 {
-	cpu_cur()->recoverdata = NULL;
-	//(trapframe *)recoverdata->eip = ktf->eip;
+	cpu_cur()->recover = NULL;
 	systrap((trapframe *)recoverdata, ktf->trapno, ktf->err);
 }
 
 // Check a user virtual address block for validity:
 // i.e., make sure the complete area specified lies in
 // the user address space between VM_USERLO and VM_USERHI.
-// If not, abort the syscall by sending a T_GPFLT to the parent,
+// If not, abort the syscall by sending a T_PGFLT to the parent,
 // again as if the user program's INT instruction was to blame.
 //
 // Note: Be careful that your arithmetic works correctly
@@ -73,7 +84,7 @@ static void checkva(trapframe *utf, uint32_t uva, size_t size)
 	if ((size < 0) ||
 		(uva < VM_USERLO) || (uva >= VM_USERHI) ||
 		((VM_USERHI - uva)< size)) {
-		systrap(utf, T_GPFLT, 0);
+		systrap(utf, T_PGFLT, 0);
 	}
 }
 
@@ -99,8 +110,17 @@ void usercopy(trapframe *utf, bool copyout,
 static void
 do_cputs(trapframe *tf, uint32_t cmd)
 {
+	//cprintf("in do_cputs , tf->regs.ebx 0x%x\n",tf->regs.ebx);
 	// Print the string supplied by the user: pointer in EBX
-	cprintf("%s", (char*)tf->regs.ebx);
+	pageinfo *pi =mem_alloc();
+	char *str = (char *)mem_pi2ptr(pi);
+	uint32_t len = strlen((char *)tf->regs.ebx) + 1;
+	assert(pi != NULL);
+	assert(len > 0 && len <= PAGESIZE);
+	usercopy(tf, false, (void *)str, tf->regs.ebx, len);
+	
+	cprintf("%s", str);
+	mem_free(pi);
 
 	trap_return(tf);	// syscall completed
 }
@@ -126,17 +146,20 @@ do_cputs(trapframe *tf, uint32_t cmd)
 //			the parent wakes up and restarts its PUT system call as described above)
 static void
 do_put(trapframe* tf){
-	procstate *cpustate  = (procstate *)tf->regs.ebx;
+	pageinfo *pi = mem_alloc();
+	procstate *cpustate = (procstate *)mem_pi2ptr(pi);
 	uint32_t cn = (uint32_t)tf->regs.edx;
 	proc *parent = cpu_cur()->proc;
 	proc *child =  parent->child[cn];
-	
+	assert(pi != NULL);
+	assert(cn >= 0 && cn < PROC_CHILDREN);
 	assert(parent != NULL);
 	// at each moment the specific parent process could only be excute by only on cpu 
 	// so the specific child process's proc_alloc didn't need a lock
 	//cprintf("in do_put : parent(0x%x)\n",parent);
 	if (child == NULL) {
 		child = proc_alloc(parent, cn);
+		assert(child != NULL);
 		//cprintf("in do_put : new child(0x%x)\n",child);
 	}
 	// get the child's lock the ensure that when step into the proc_wait, the child's state didn't be modified
@@ -147,7 +170,8 @@ do_put(trapframe* tf){
 	spinlock_release(&child->lock);
 	if (tf->regs.eax & SYS_REGS) {
 		spinlock_acquire(&(child->lock));
-		// hong is it right ??????
+		assert(pi != NULL);
+		usercopy(tf, false, (void *)cpustate, tf->regs.ebx, sizeof(procstate));
 		memmove(&(child->sv.tf.regs), &(cpustate->tf.regs), sizeof(pushregs));
 		child->sv.tf.ds = CPU_GDT_UDATA | 3;
 		child->sv.tf.es = CPU_GDT_UDATA | 3;
@@ -159,7 +183,6 @@ do_put(trapframe* tf){
 		child->sv.tf.fs = cpustate->tf.fs;
 		child->sv.tf.gs = cpustate->tf.gs;
 		// TODO: how to put eflags
-
 		spinlock_release(&(child->lock));
 	}
 	if (tf->regs.eax & SYS_COPY) {
@@ -175,7 +198,7 @@ do_put(trapframe* tf){
 		assert(child->state == PROC_STOP);
 		proc_ready(child);
 	}
-
+	mem_free(pi);
 	trap_return(tf);
 }
 
@@ -200,8 +223,8 @@ do_get(trapframe* tf) {
 	}
 	spinlock_release(&child->lock);
 	if (tf->regs.eax & SYS_REGS) {
-		// TODO: is it right ???????
-		memmove(&(cpustate->tf), &(child->sv.tf),sizeof(trapframe));
+		usercopy(tf, true, (void *)(&child->sv.tf), mem_phys(&cpustate->tf), sizeof(trapframe));
+		//memmove(&(cpustate->tf), &(child->sv.tf),sizeof(trapframe));
 	}
 	if (tf->regs.eax & SYS_COPY) {
 		uint32_t size = tf->regs.ecx;
